@@ -1,0 +1,11 @@
+{
+  "name": "ArachnidSwinger",
+  "main": "index.html",
+  "version": "1.0.0",
+  "description": "juegazo",
+  "window": {
+    "title": "Arachno",
+    "width": 800,
+    "height": 600
+  }
+}

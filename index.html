@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>ArachnoSwinger</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#111;font-family:sans-serif;height:100%;}
+  canvas{display:block;background:#7ec8e3;}
+
+  /* ---- overlay del menu, todo en espacio de pantalla, por encima del canvas ---- */
+  #menu{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center;
+    pointer-events:none; /* que los clicks pasen al canvas salvo en los botones */
+  }
+  #title{
+    margin-top:9vh;
+    font-family:'Trebuchet MS', Verdana, sans-serif;
+    font-weight:900;
+    font-size:clamp(40px, 9vw, 108px);
+    letter-spacing:2px;
+    text-align:center;
+    /* rojo por fuera, gris claro por dentro: relleno gris claro + contorno rojo grueso +
+       un segundo contorno rojo mas fino encima para que el borde quede bien definido */
+    color:#e2e2e2;
+    -webkit-text-stroke:3px #d64545;
+    text-shadow:
+      0 0 18px rgba(214,69,69,0.55),
+      0 0 40px rgba(214,69,69,0.35),
+      3px 3px 0 #7a1f1f;
+    user-select:none;
+  }
+  #buttons{
+    margin-top:auto;
+    margin-bottom:9vh;
+    display:flex;
+    flex-direction:column;
+    gap:22px;
+    pointer-events:auto;
+  }
+  .menuBtn{
+    font-family:'Trebuchet MS', Verdana, sans-serif;
+    font-weight:800;
+    font-size:26px;
+    letter-spacing:3px;
+    padding:16px 54px;
+    border-radius:8px;
+    cursor:pointer;
+    border:2px solid #c9c9c9;
+    background:rgba(20,20,24,0.55);
+    color:#e2e2e2;
+    transition:transform .12s ease, background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .menuBtn:hover{
+    transform:translateY(-2px) scale(1.03);
+  }
+  #newGameBtn:hover{
+    background:rgba(214,69,69,0.85);
+    border-color:#ff6b6b;
+    color:#fff;
+  }
+  #continueBtn{
+    opacity:0.55;
+    cursor:not-allowed;
+    border-color:#6b6b6b;
+  }
+  #continueBtn:hover{
+    transform:none;
+    background:rgba(20,20,24,0.55);
+    color:#e2e2e2;
+  }
+
+  /* ---- boton de configuracion, esquina superior derecha ---- */
+  #settingsBtn{
+    position:absolute; top:22px; right:22px;
+    width:48px; height:48px;
+    border-radius:50%;
+    border:2px solid #c9c9c9;
+    background:rgba(20,20,24,0.55);
+    color:#e2e2e2;
+    font-size:22px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    pointer-events:auto;
+    transition:transform .12s ease, border-color .12s ease, background .12s ease;
+  }
+  #settingsBtn:hover{
+    transform:rotate(35deg) scale(1.08);
+    border-color:#ff6b6b;
+    background:rgba(214,69,69,0.55);
+  }
+
+  /* ---- overlay/modal de configuracion ---- */
+  #settingsOverlay{
+    position:absolute; inset:0;
+    background:rgba(0,0,0,0.55);
+    display:none;
+    align-items:center; justify-content:center;
+    z-index:20;
+    pointer-events:auto;
+  }
+  #settingsOverlay.open{ display:flex; }
+  #settingsBox{
+    width:min(520px, 90vw);
+    max-height:82vh;
+    overflow-y:auto;
+    background:#1b1b20;
+    border:2px solid #d64545;
+    border-radius:14px;
+    box-shadow:0 0 40px rgba(214,69,69,0.35);
+    padding:26px 26px 20px;
+    font-family:'Trebuchet MS', Verdana, sans-serif;
+    color:#e2e2e2;
+  }
+  #settingsBox h2{
+    margin:0 0 20px;
+    font-size:24px;
+    letter-spacing:1px;
+    color:#e2e2e2;
+    -webkit-text-stroke:1px #d64545;
+    text-align:center;
+  }
+  .settingRow{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:20px;
+  }
+  .settingLabel{
+    flex:1;
+    font-size:15px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  /* circulito "i" de info -- el tooltip en si YA NO vive aca dentro (ver #floatingTooltip mas
+     abajo): si lo dejamos position:absolute adentro de #settingsBox, el overflow-y:auto de esa
+     caja lo recorta apenas se sale un poco del borde. En cambio el tooltip es un unico elemento
+     position:fixed pegado al <body>, que JS posiciona a mano sobre el icono que tenga el mouse
+     encima en cada momento -- asi nunca queda adentro de nada con scroll */
+  .infoWrap{ position:relative; display:inline-flex; flex-shrink:0; }
+  .infoIcon{
+    width:17px; height:17px;
+    border-radius:50%;
+    border:1.5px solid #9a9a9a;
+    color:#c9c9c9;
+    font-size:11px;
+    font-weight:bold;
+    font-style:italic;
+    display:flex; align-items:center; justify-content:center;
+    cursor:default;
+    user-select:none;
+  }
+  .infoIcon:hover{ border-color:#e2e2e2; color:#e2e2e2; }
+  #floatingTooltip{
+    position:fixed;
+    width:210px;
+    background:#0e0e11;
+    border:1px solid #d64545;
+    border-radius:8px;
+    padding:8px 10px;
+    font-size:12.5px;
+    line-height:1.35;
+    color:#e2e2e2;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .12s ease;
+    z-index:60; /* por encima del overlay (z-index:20) y de la caja de configuracion */
+  }
+  #floatingTooltip.show{ opacity:1; }
+
+  /* toggle NO/SI */
+  .toggle{
+    display:flex;
+    border:2px solid #6b6b6b;
+    border-radius:8px;
+    overflow:hidden;
+    flex-shrink:0;
+  }
+  .toggle button{
+    font-family:inherit;
+    font-weight:700;
+    font-size:13px;
+    letter-spacing:1px;
+    padding:7px 14px;
+    border:none;
+    background:transparent;
+    color:#9a9a9a;
+    cursor:pointer;
+  }
+  .toggle button.active{
+    background:#d64545;
+    color:#fff;
+  }
+
+  .keyPickBtn{
+    font-family:inherit;
+    font-weight:700;
+    font-size:13px;
+    letter-spacing:1px;
+    padding:7px 16px;
+    border-radius:8px;
+    border:2px solid #6b6b6b;
+    background:transparent;
+    color:#e2e2e2;
+    cursor:pointer;
+    flex-shrink:0;
+    min-width:96px;
+  }
+  .keyPickBtn.listening{
+    border-color:#d64545;
+    color:#ff8a8a;
+  }
+  .keyPickBtn:hover{ border-color:#e2e2e2; }
+
+  #settingsDivider{
+    border:none;
+    border-top:1px solid #3a3a3a;
+    margin:6px 0 18px;
+  }
+
+  #nwjsStatus{
+    text-align:center;
+    font-size:11px;
+    margin:-10px 0 16px;
+    line-height:1.4;
+    word-break:break-word;
+  }
+  #nwjsStatus.ok{ color:#5fbf7a; }
+  #nwjsStatus.off{ color:#7a7a7a; }
+  #nwjsStatus.err{ color:#e0c23c; }
+
+  #wipeBtn{
+    width:100%;
+    font-family:inherit;
+    font-weight:800;
+    font-size:14px;
+    letter-spacing:2px;
+    padding:12px;
+    border-radius:8px;
+    border:2px solid #6b6b6b;
+    background:transparent;
+    color:#c9c9c9;
+    cursor:pointer;
+    transition:border-color .12s ease, color .12s ease, background .12s ease;
+  }
+  #wipeBtn:hover{
+    border-color:#d64545;
+    color:#fff;
+    background:rgba(214,69,69,0.65);
+  }
+  #wipeConfirmMsg{
+    text-align:center;
+    font-size:12.5px;
+    color:#e0c23c;
+    min-height:16px;
+    margin-top:8px;
+  }
+
+  #settingsCredit{
+    text-align:center;
+    font-size:11px;
+    color:#5a5a5a;
+    margin-top:18px;
+    user-select:none;
+  }
+
+  #closeSettingsBtn{
+    display:block;
+    margin:4px auto 0;
+    background:none;
+    border:none;
+    color:#9a9a9a;
+    font-size:13px;
+    letter-spacing:1px;
+    cursor:pointer;
+    padding:6px 10px;
+  }
+  #closeSettingsBtn:hover{ color:#e2e2e2; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<button id="settingsBtn" title="Configuración">⚙</button>
+
+<div id="settingsOverlay">
+  <div id="settingsBox">
+    <h2>Configuración</h2>
+
+    <div class="settingRow">
+      <div class="settingLabel">
+        <span class="infoIcon" data-tip="¿quien usaría esto?">i</span>
+        ¿Invertir clicks de telarañas?
+      </div>
+      <div class="toggle" id="invertToggle">
+        <button data-val="false">NO</button>
+        <button data-val="true">SÍ</button>
+      </div>
+    </div>
+
+    <div class="settingRow">
+      <div class="settingLabel">
+        <span class="infoIcon" data-tip="Sip, esta es la unica Key configurable del teclado">i</span>
+        Modo chill
+      </div>
+      <button class="keyPickBtn" id="chillKeyBtn">Q</button>
+    </div>
+
+    <div class="settingRow">
+      <div class="settingLabel">
+        <span class="infoIcon" data-tip="¿Eres mas fan de The ArachnoSwinger o de The Amazing ArachnoSwinger? Seguro el Amazing ¿no?">i</span>
+        ¿Amazing?
+      </div>
+      <div class="toggle" id="amazingToggle">
+        <button data-val="false">NO</button>
+        <button data-val="true">SÍ</button>
+      </div>
+    </div>
+
+    <hr id="settingsDivider">
+    <div id="nwjsStatus"></div>
+
+    <button id="wipeBtn">BORRAR DATOS</button>
+    <div id="wipeConfirmMsg"></div>
+
+    <div id="settingsCredit">Otro juego hecho con IA por EasyFacilongo</div>
+
+    <button id="closeSettingsBtn">cerrar</button>
+  </div>
+</div>
+
+<div id="floatingTooltip"></div>
+
+<div id="menu">
+  <div id="title">ArachnoSwinger</div>
+  <div id="buttons">
+    <button id="newGameBtn" class="menuBtn">NUEVO JUEGO</button>
+    <button id="continueBtn" class="menuBtn" title="Todavia no hay partidas guardadas">CONTINUAR</button>
+  </div>
+</div>
+
+<script>
+// ==========================================================================
+// Fondo animado del menu: la MISMA ciudad infinita por chunks de spiderswing.html
+// (edificios, cielo dia/noche, trafico), pero sin nada de gameplay -- no hay jugador,
+// no hay civiles/entidades, no hay telaranas ni HUD. Solo una camara "fantasma" que
+// viaja sola hacia la derecha a velocidad constante, para que el menu se sienta vivo.
+// ==========================================================================
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+function resize(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- MUNDO / CHUNKS (identico en logica a spiderswing.html, para que la ciudad
+// generada sea del mismo estilo y nunca "bugee" al cargar/descargar franjas) ----------
+const WORLD_WIDTH = 13000;
+const STREET_Y    = 480;
+const CHUNK_WIDTH  = WORLD_WIDTH / 2;
+
+const WINDOW_W = 14, WINDOW_H = 18;
+const BUILDING_W_MIN = 320, BUILDING_W_MAX = 480;
+const BUILDING_GAP_MIN = 60, BUILDING_GAP_MAX = 140;
+const AD_TEXTS = ['CosCorp', 'Café Central', 'SuperJabón', 'Lentes 2x1', 'Pizza del Barrio', 'Gimnasio Titán'];
+
+function mulberry32(seed){
+  return function(){
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const WORLD_SEED = Math.floor(Math.random()*0xFFFFFFFF);
+function chunkRng(chunkIndex){
+  const h = (Math.imul(chunkIndex + 0x9E3779B9, 2654435761) ^ WORLD_SEED) >>> 0;
+  return mulberry32(h);
+}
+
+const buildings = [];
+const platforms = [];
+const loadedChunks = new Map();
+
+function generateChunk(index){
+  const rng = chunkRng(index);
+  const startX = index * CHUNK_WIDTH;
+  const endX = startX + CHUNK_WIDTH;
+
+  const chunkBuildings = [];
+  const chunkPlatforms = [];
+  let hasCosCorp = false;
+
+  let x = (index === 0) ? 50 : startX + BUILDING_GAP_MIN + rng()*(BUILDING_GAP_MAX-BUILDING_GAP_MIN);
+  while(x < endX - 50){
+    const w = BUILDING_W_MIN + rng()*(BUILDING_W_MAX-BUILDING_W_MIN);
+    if(x + w > endX - 40) break;
+    const h = 900 + rng()*1900;
+    const b = {x, y: STREET_Y - h, w, h};
+
+    b.windows = [];
+    const padX = 16, padY = 24, gapX = 12, gapY = 20;
+    const cols = Math.max(1, Math.floor((w - padX*2 + gapX) / (WINDOW_W+gapX)));
+    const rows = Math.max(1, Math.floor((h - padY*2 + gapY) / (WINDOW_H+gapY)));
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        b.windows.push({
+          x: padX + c*(WINDOW_W+gapX),
+          y: padY + r*(WINDOW_H+gapY),
+          lit: rng() < 0.25
+        });
+      }
+    }
+
+    if(h > 650 && rng() < 0.12){
+      const text = AD_TEXTS[Math.floor(rng()*AD_TEXTS.length)];
+      b.billboard = text;
+      if(text === 'CosCorp') hasCosCorp = true;
+    }
+
+    chunkBuildings.push(b);
+    chunkPlatforms.push({x: b.x, y: b.y, w: b.w});
+
+    const numBalconies = 1 + Math.floor(rng()*3);
+    for(let i=0;i<numBalconies;i++){
+      const frac = 0.2 + rng()*0.6;
+      const by = b.y + b.h*frac;
+      const bw = 55;
+      const side = rng()<0.5 ? -1 : 1;
+      const bx = side < 0 ? (b.x - bw*0.6) : (b.x + b.w - bw*0.4);
+      chunkPlatforms.push({x: bx, y: by, w: bw, balcony: true});
+    }
+
+    x += w + BUILDING_GAP_MIN + rng()*(BUILDING_GAP_MAX-BUILDING_GAP_MIN);
+  }
+
+  if(!hasCosCorp && chunkBuildings.length){
+    const tall = chunkBuildings.filter(b => b.h > 650);
+    const pick = tall.length ? tall[Math.floor(rng()*tall.length)] : chunkBuildings[Math.floor(rng()*chunkBuildings.length)];
+    if(pick) pick.billboard = 'CosCorp';
+  }
+
+  return {buildings: chunkBuildings, platforms: chunkPlatforms};
+}
+
+function rebuildWorldArrays(){
+  buildings.length = 0; platforms.length = 0;
+  const indices = [...loadedChunks.keys()].sort((a,b)=>a-b);
+  for(const i of indices){
+    const c = loadedChunks.get(i);
+    buildings.push(...c.buildings);
+    platforms.push(...c.platforms);
+  }
+}
+
+// version simplificada de updateChunks (sin FORCED_CHUNK_ANCHORS: en el menu no hay
+// entidades que puedan necesitar anclar un chunk lejano) -- mismo criterio de 3 chunks
+// (uno atras, el actual, uno adelante) que en spiderswing.html
+function updateChunks(camX){
+  const start = Math.floor(camX / CHUNK_WIDTH) - 1;
+  const desired = new Set([start, start+1, start+2]);
+
+  let changed = false;
+  for(const i of [...loadedChunks.keys()]){
+    if(!desired.has(i)){
+      loadedChunks.delete(i);
+      changed = true;
+    }
+  }
+  for(const i of desired){
+    if(!loadedChunks.has(i)){
+      loadedChunks.set(i, generateChunk(i));
+      changed = true;
+    }
+  }
+  if(changed) rebuildWorldArrays();
+}
+
+// ---------- CAMARA FANTASMA: viaja sola hacia la derecha, constante ----------
+const GHOST_CAM_SPEED = 95; // px/s
+const camera = {x: 0, y: STREET_Y - 1}; // y fija: se ajusta apenas conocemos canvas.height (ver abajo)
+function placeCameraY(){
+  camera.y = STREET_Y - canvas.height*0.72; // deja la calle abajo y buen cielo/skyline arriba
+}
+placeCameraY();
+window.addEventListener('resize', placeCameraY);
+
+updateChunks(camera.x);
+
+// ---------- TRAFICO: mismo sistema de spawn/despawn continuo de spiderswing.html, pero con
+// una densidad auto-regulada (ni se amontonan, ni queda vacio) en vez de un timer puramente
+// al azar. Los carros NO viven dentro de los chunks, van y vienen solos (igual que el juego) ----------
+const cars = [];
+const CAR_COLORS = {
+  blue:   {body: '#3b6fd6', dir: 1},
+  red:    {body: '#d64545', dir: -1},
+  yellow: {body: '#e0c23c', dir: 0}
+};
+const CAR_WHEEL_RADIUS = 64*0.2;
+const CAR_DESPAWN_DIST = CHUNK_WIDTH * 2;
+const CAR_SPAWN_MARGIN = 500;
+// separacion "linda" que queremos entre autos, en promedio, dentro de lo visible + margen:
+// ni tan chica que se amontonen, ni tan grande que la calle se sienta desierta
+const CAR_TARGET_GAP_PX = 600;
+// no dejamos nacer un auto pegado a otro que ya este cerca de ese mismo punto de aparicion
+const CAR_MIN_SPAWN_CLEARANCE = 230;
+
+function spawnCar(x, vx, color){
+  const w = 170, h = 64;
+  cars.push({x, y: STREET_Y - h - CAR_WHEEL_RADIUS, w, h, vx, color, turnCooldown: color === 'yellow' ? 3 + Math.random()*4 : 0});
+}
+
+function desiredCarCount(){
+  const viewSpan = canvas.width + CAR_SPAWN_MARGIN*2;
+  return Math.max(3, Math.round(viewSpan / CAR_TARGET_GAP_PX));
+}
+
+let carSpawnTimer = 0.4;
+function trySpawnCars(dt){
+  carSpawnTimer -= dt;
+  if(carSpawnTimer > 0) return;
+
+  // si ya estamos a densidad objetivo (o por encima), esperamos bastante antes de reintentar,
+  // para que la calle respire en vez de seguir apilando autos
+  if(cars.length >= desiredCarCount()){
+    carSpawnTimer = 1.6 + Math.random()*1.6;
+    return;
+  }
+
+  const colorNames = Object.keys(CAR_COLORS);
+  const color = colorNames[Math.floor(Math.random()*colorNames.length)];
+  const forcedDir = CAR_COLORS[color].dir;
+  const dir = forcedDir !== 0 ? forcedDir : (Math.random() < 0.5 ? -1 : 1);
+  const speed = dir * (60 + Math.random()*80);
+  const x = dir > 0
+    ? camera.x - CAR_SPAWN_MARGIN - 170
+    : camera.x + canvas.width + CAR_SPAWN_MARGIN;
+
+  // si justo hay otro auto muy cerca de ese punto de entrada, no forzamos el spawn (evita el
+  // amontonamiento): reintentamos pronto en vez de ahora mismo
+  const blocked = cars.some(c => Math.abs(c.x - x) < CAR_MIN_SPAWN_CLEARANCE);
+  if(blocked){
+    carSpawnTimer = 0.25;
+    return;
+  }
+
+  spawnCar(x, speed, color);
+  carSpawnTimer = 0.5 + Math.random()*0.7;
+}
+
+function despawnFarCars(){
+  for(let i = cars.length-1; i>=0; i--){
+    if(Math.abs(cars[i].x - camera.x) > CAR_DESPAWN_DIST) cars.splice(i,1);
+  }
+}
+
+// arranca con algo de trafico ya circulando, no con la calle vacia
+(function seedInitialTraffic(){
+  const colorNames = Object.keys(CAR_COLORS);
+  const n = desiredCarCount();
+  for(let i=0;i<n;i++){
+    const color = colorNames[Math.floor(Math.random()*colorNames.length)];
+    const forcedDir = CAR_COLORS[color].dir;
+    const dir = forcedDir !== 0 ? forcedDir : (Math.random()<0.5 ? -1 : 1);
+    const x = camera.x + (Math.random()*(canvas.width+CAR_SPAWN_MARGIN*2) - CAR_SPAWN_MARGIN);
+    spawnCar(x, dir*(60+Math.random()*80), color);
+  }
+})();
+
+function updateCars(dt){
+  for(const car of cars){
+    car.x += car.vx*dt;
+    if(car.color === 'yellow'){
+      car.turnCooldown -= dt;
+      if(car.turnCooldown <= 0){
+        car.turnCooldown = 4 + Math.random()*5;
+        if(Math.random() < 0.35) car.vx = -car.vx;
+      }
+    }
+  }
+  trySpawnCars(dt);
+  despawnFarCars();
+}
+
+// ---------- CIELO (identico a spiderswing.html: dia/noche real segun la hora de la maquina) ----------
+function hexToRgb(hex){
+  const n = parseInt(hex.slice(1), 16);
+  return {r:(n>>16)&255, g:(n>>8)&255, b:n&255};
+}
+function lerpColor(a, b, t){
+  t = Math.max(0, Math.min(1, t));
+  const pa = hexToRgb(a), pb = hexToRgb(b);
+  const r = Math.round(pa.r + (pb.r-pa.r)*t);
+  const g = Math.round(pa.g + (pb.g-pa.g)*t);
+  const bl = Math.round(pa.b + (pb.b-pa.b)*t);
+  return `rgb(${r},${g},${bl})`;
+}
+function getDaylightInfo(){
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes()/60 + now.getSeconds()/3600;
+  const sunrise = 6.25, sunset = 18.75;
+  const span = 1.1;
+  const sunT = (hour - sunrise) / (sunset - sunrise);
+  const sunUp = sunT >= 0 && sunT <= 1;
+  const sunArc = sunUp ? Math.sin(sunT*Math.PI) : 0;
+  let dayLight = 0;
+  if(hour >= sunrise && hour <= sunset) dayLight = 1;
+  else if(hour >= sunrise-span && hour < sunrise) dayLight = (hour-(sunrise-span))/span;
+  else if(hour > sunset && hour <= sunset+span) dayLight = 1-(hour-sunset)/span;
+  dayLight = Math.max(0, Math.min(1, dayLight));
+  const warm = Math.max(0, 1 - Math.abs(dayLight-0.5)*2.6);
+  return {hour, sunT, sunUp, sunArc, dayLight, warm};
+}
+function drawSky(sky){
+  const topColor = lerpColor('#050912', '#4fa8d8', sky.dayLight);
+  let horizonColor = lerpColor('#141a33', '#bfe6f2', sky.dayLight);
+  horizonColor = lerpColor(horizonColor, '#ff9a63', sky.warm*0.75);
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, topColor);
+  grad.addColorStop(1, horizonColor);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+function drawSun(sky){
+  if(!sky.sunUp) return;
+  const sunX = canvas.width * (0.06 + 0.88*sky.sunT);
+  const horizonY = canvas.height*0.56, peakY = canvas.height*0.10;
+  const sunY = horizonY - sky.sunArc*(horizonY - peakY);
+  const sunColor = lerpColor('#ff7b42', '#fff6d6', sky.sunArc);
+  ctx.save();
+  ctx.shadowColor = sunColor;
+  ctx.shadowBlur = 45;
+  ctx.fillStyle = sunColor;
+  ctx.beginPath(); ctx.arc(sunX, sunY, 26, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function mountainHeight(x, freqScale){
+  return Math.sin(x*0.0021*freqScale)*34 + Math.sin(x*0.0007*freqScale + 1.6)*58;
+}
+function drawMountainLayer(sky, baseYFrac, ampScale, freqScale, parallax, color){
+  const baseY = canvas.height*baseYFrac;
+  const originX = camera.x*parallax;
+  const step = 48;
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height);
+  for(let sx = 0; sx <= canvas.width+step; sx += step){
+    const h = Math.max(0, mountainHeight(sx+originX, freqScale))*ampScale;
+    ctx.lineTo(sx, baseY - h);
+  }
+  ctx.lineTo(canvas.width, canvas.height);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+function drawMountains(sky){
+  let far  = lerpColor('#141c33', '#7c96ad', sky.dayLight);
+  let near = lerpColor('#0c1220', '#5c7a92', sky.dayLight);
+  far  = lerpColor(far,  '#8a6b86', sky.warm*0.5);
+  near = lerpColor(near, '#6b5468', sky.warm*0.5);
+  drawMountainLayer(sky, 0.60, 0.7, 1.0, 0.035, far);
+  drawMountainLayer(sky, 0.63, 1.0, 1.6, 0.08,  near);
+}
+const CLOUD_LAYER = [
+  {ox: 120,  oy: 0.14, s: 1.0},
+  {ox: 620,  oy: 0.23, s: 0.7},
+  {ox: 1080, oy: 0.10, s: 1.25},
+  {ox: 1520, oy: 0.27, s: 0.8},
+  {ox: 1980, oy: 0.17, s: 1.05},
+];
+const CLOUD_PERIOD = 2400;
+function drawCloudBlob(x, y, scale){
+  ctx.beginPath();
+  ctx.ellipse(x,        y,       34*scale, 14*scale, 0, 0, Math.PI*2);
+  ctx.ellipse(x+22*scale, y-6*scale, 22*scale, 12*scale, 0, 0, Math.PI*2);
+  ctx.ellipse(x-24*scale, y-4*scale, 20*scale, 11*scale, 0, 0, Math.PI*2);
+  ctx.fill();
+}
+function drawClouds(sky){
+  const parallax = 0.12;
+  const drift = performance.now()*0.0025;
+  const scrollX = camera.x*parallax + drift;
+  const cloudColor = lerpColor('#3a3f55', '#ffffff', sky.dayLight);
+  ctx.save();
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = cloudColor;
+  const repeats = Math.ceil(canvas.width/CLOUD_PERIOD) + 2;
+  for(const c of CLOUD_LAYER){
+    const base = ((c.ox - scrollX) % CLOUD_PERIOD + CLOUD_PERIOD) % CLOUD_PERIOD;
+    for(let i=-1; i<repeats; i++){
+      const sx = base + i*CLOUD_PERIOD;
+      if(sx < -80 || sx > canvas.width+80) continue;
+      drawCloudBlob(sx, canvas.height*c.oy, c.s);
+    }
+  }
+  ctx.restore();
+}
+
+// ---------- RENDER ----------
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  const sky = getDaylightInfo();
+  drawSky(sky);
+  drawSun(sky);
+  drawMountains(sky);
+  drawClouds(sky);
+
+  ctx.save();
+  ctx.translate(-camera.x, -camera.y);
+
+  // edificios
+  ctx.fillStyle = '#555a66';
+  for(const b of buildings) ctx.fillRect(b.x, b.y, b.w, b.h);
+
+  // ventanitas
+  for(const b of buildings){
+    for(const win of b.windows){
+      ctx.fillStyle = win.lit ? '#ffe9a8' : '#2a2d35';
+      ctx.fillRect(b.x + win.x, b.y + win.y, WINDOW_W, WINDOW_H);
+    }
+  }
+
+  // letreros de publicidad
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 13px monospace';
+  for(const b of buildings){
+    if(!b.billboard) continue;
+    const bw = Math.min(b.w - 10, 10 + b.billboard.length*9);
+    const bh = 26;
+    const bx = b.x + (b.w - bw)/2;
+    const by = b.y + 34;
+    ctx.fillStyle = '#111';
+    ctx.fillRect(bx-3, by-3, bw+6, bh+6);
+    ctx.fillStyle = '#f2c14e';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = '#111';
+    ctx.fillText(b.billboard, bx+bw/2, by+bh/2+1);
+  }
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+
+  // balcones (puro detalle visual, como en el juego)
+  ctx.fillStyle = '#2f323a';
+  for(const p of platforms){
+    if(p.balcony) ctx.fillRect(p.x, p.y-8, p.w, 10);
+  }
+
+  // calle
+  ctx.fillStyle = '#333';
+  ctx.fillRect(camera.x - 100, STREET_Y, canvas.width + 200, 4000);
+
+  // carros
+  for(const car of cars){
+    ctx.save();
+    ctx.fillStyle = (CAR_COLORS[car.color] && CAR_COLORS[car.color].body) || '#d64545';
+    ctx.fillRect(car.x, car.y, car.w, car.h);
+
+    ctx.fillStyle = '#2a2d35';
+    ctx.fillRect(car.x + car.w*0.14, car.y + 6, car.w*0.72, car.h*0.34);
+
+    ctx.fillStyle = '#111';
+    const wheelR = CAR_WHEEL_RADIUS;
+    ctx.beginPath(); ctx.arc(car.x + car.w*0.22, car.y + car.h, wheelR, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(car.x + car.w*0.78, car.y + car.h, wheelR, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#ffe9a8';
+    const headlightX = car.vx >= 0 ? car.x + car.w - 5 : car.x;
+    ctx.fillRect(headlightX, car.y + car.h*0.55, 5, 6);
+    ctx.restore();
+  }
+
+  ctx.restore();
+
+  // oscurece de noche, igual que el juego
+  if(sky.dayLight < 1){
+    ctx.save();
+    ctx.globalAlpha = (1 - sky.dayLight) * 0.55;
+    ctx.fillStyle = '#0a1030';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+
+  // vineta suave abajo para que los botones del menu siempre se lean bien, de dia o de noche
+  const vig = ctx.createLinearGradient(0, canvas.height*0.55, 0, canvas.height);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, canvas.height*0.55, canvas.width, canvas.height*0.45);
+}
+
+// ---------- LOOP ----------
+let lastT = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - lastT)/1000);
+  lastT = now;
+
+  camera.x += GHOST_CAM_SPEED*dt;
+  updateChunks(camera.x);
+  updateCars(dt);
+  render();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---------- BOTONES ----------
+document.getElementById('newGameBtn').addEventListener('click', () => {
+  window.location.href = 'spiderswing.html';
+});
+document.getElementById('continueBtn').addEventListener('click', () => {
+  // por ahora no hace nada (todavia no hay sistema de guardado)
+});
+
+// ==========================================================================
+// CONFIGURACION -- caja que se superpone al menu, solo 3 cosas ajustables (no
+// controles libres): invertir los clicks del lanzatelarañas, la tecla de "modo chill", y si
+// el webType activo es Andrew (mecanico) o Tobey (organico, "Amazing" = NO). Se guardan en
+// localStorage bajo ARACHNOSWINGER_SETTINGS_KEY -- spiderswing.html lee esa misma clave al
+// arrancar la partida y las aplica por encima de habilities/controls.json (ver
+// applyStoredSettingsToControls en spiderswing.html).
+// ==========================================================================
+const ARACHNOSWINGER_SETTINGS_KEY = 'arachnoswinger:settings';
+
+const DEFAULT_SETTINGS = {
+  invertWebClicks: false,
+  chillKey: 'KeyQ',
+  amazing: false // NO = Tobey (organicas), SI = Andrew (lanzatelarañas mecanico)
+};
+
+// teclas que NUNCA se pueden asignar al modo chill: WASD, Ctrl, Shift, P y los numeros
+// (fila de arriba Digit0-9 y el numpad Numpad0-9, por las dudas)
+const CHILL_KEY_BLOCKLIST = new Set([
+  'KeyW','KeyA','KeyS','KeyD',
+  'ControlLeft','ControlRight',
+  'ShiftLeft','ShiftRight',
+  'KeyP',
+  'Digit0','Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9',
+  'Numpad0','Numpad1','Numpad2','Numpad3','Numpad4','Numpad5','Numpad6','Numpad7','Numpad8','Numpad9'
+]);
+
+// nombres lindos para mostrar en el boton, para los codes mas comunes que alguien elegiria
+// aca (si cae uno no listado, mostramos el code tal cual, sin traducir)
+const KEY_LABELS = {
+  Space: 'ESPACIO', Enter: 'ENTER', Tab: 'TAB', Escape: 'ESC', CapsLock: 'CAPS',
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+  Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+  Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backslash: '\\'
+};
+function keyLabel(code){
+  if(KEY_LABELS[code]) return KEY_LABELS[code];
+  if(code.startsWith('Key')) return code.slice(3); // KeyF -> F
+  return code;
+}
+
+// ---- NW.js: cuando el juego se abre asi (a diferencia de un server de Python pelado, que es
+// SOLO http estatico sin forma de escribir nada), la pagina tiene el modulo 'fs' de Node
+// disponible de verdad -- asi que ahi SI podemos escribir habilities/controls.json en disco,
+// que es lo que en el fondo se pidio. Si no estamos en NW.js (window.nw no existe, o el
+// nodeIntegration de esa ventana esta apagado), esto se apaga solo y seguimos usando
+// localStorage nomas, que es lo unico posible desde un navegador comun.
+const isNWJS = (typeof window !== 'undefined' && !!window.nw) && (typeof require === 'function');
+let nwjsWriteWorked = null;   // null = todavia no se probo, true/false = resultado del ultimo intento
+let nwjsWriteErrorMsg = '';   // mensaje REAL de Node del ultimo intento fallido (para poder diagnosticar de verdad, en vez de un texto generico que no dice nada)
+let nwjsResolvedPath = '';    // a que ruta exacta se intento escribir, tambien para diagnosticar
+
+// carpeta del juego, en disco de verdad -- __dirname NO siempre esta disponible en NW.js:
+// solo se lo inyecta a paginas cargadas por file://. Si el juego se abre apuntando a un
+// servidor (por ejemplo el server de Python, http://localhost:xxxx/index.html), __dirname
+// queda undefined aunque estemos corriendo adentro de NW.js con Node activo -- ahi no hay
+// "carpeta" que valga para una URL http, asi que probamos, en orden:
+//   1) __dirname, si esta definido (caso mas comun: se abrio el .html directo, file://)
+//   2) si la pagina se cargo por file://, reconstruimos la carpeta a partir de la URL misma
+//      (funciona igual aunque __dirname no exista)
+//   3) process.cwd(): la carpeta desde la que se arranco NW.js -- sirve tanto para file://
+//      como para el caso del server de Python, siempre que python se haya arrancado PARADO
+//      DENTRO de la carpeta del juego (que es el uso normal de "python -m http.server" aca)
+function resolveGameDir(){
+  if(typeof __dirname !== 'undefined' && __dirname) return __dirname;
+
+  if(window.location.protocol === 'file:'){
+    try{
+      const path = require('path');
+      let p = decodeURIComponent(window.location.pathname);
+      // en Windows la pathname de una URL file:// viene con una barra de mas antes de la
+      // letra de unidad (ej "/C:/Users/vos/juego/index.html") -- se la sacamos
+      if(/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+      return path.dirname(p);
+    } catch(err){ /* seguimos probando */ }
+  }
+
+  try{
+    if(typeof process !== 'undefined' && process.cwd) return process.cwd();
+  } catch(err){ /* nada mas que probar */ }
+
+  return null;
+}
+
+// escribe los 3 campos que controla este menu (chill, buttons.webLeft/webRight, webType)
+// directo sobre habilities/controls.json, preservando todo lo demas que ya tenga ese archivo
+// (spiderSense, weave, webTypes, etc.) -- lee el archivo actual, le mergea encima solo esos
+// campos, y lo vuelve a guardar con el mismo formato lindo (2 espacios de indentacion)
+function writeControlsJSONToDisk(s){
+  if(!isNWJS) return false;
+  nwjsWriteErrorMsg = '';
+  try{
+    const fs = require('fs');
+    const path = require('path');
+
+    const gameDir = resolveGameDir();
+    if(!gameDir){
+      nwjsWriteErrorMsg = 'No se pudo determinar la carpeta del juego en disco (ni __dirname, ni file://, ni process.cwd() dieron algo usable)';
+      return false;
+    }
+
+    const controlsPath = path.join(gameDir, 'habilities', 'controls.json');
+    nwjsResolvedPath = controlsPath;
+
+    let current = {};
+    try{ current = JSON.parse(fs.readFileSync(controlsPath, 'utf8')); }
+    catch(err){ /* si el archivo no existe o esta corrupto, partimos de cero y listo */ }
+
+    const merged = Object.assign({}, current, {
+      chill: [s.chillKey],
+      webType: s.amazing ? 'Andrew' : 'Tobey',
+      buttons: Object.assign({}, current.buttons, {
+        webLeft:  s.invertWebClicks ? 2 : 0,
+        webRight: s.invertWebClicks ? 0 : 2
+      })
+    });
+
+    fs.writeFileSync(controlsPath, JSON.stringify(merged, null, 2), 'utf8');
+    return true;
+  } catch(err){
+    // guardamos el error de Node TAL CUAL (codigo + mensaje), no lo tapamos con un texto
+    // generico -- EACCES/EPERM = permisos, ENOENT = la carpeta habilities/ no esta donde
+    // creiamos, etc. Se muestra en la caja de configuracion (ver refreshNWJSStatus)
+    nwjsWriteErrorMsg = (err && err.code ? '[' + err.code + '] ' : '') + (err && err.message ? err.message : String(err));
+    console.warn('No se pudo escribir habilities/controls.json en disco:', err);
+    return false;
+  }
+}
+
+function loadSettings(){
+  try{
+    const raw = localStorage.getItem(ARACHNOSWINGER_SETTINGS_KEY);
+    if(!raw) return {...DEFAULT_SETTINGS};
+    return {...DEFAULT_SETTINGS, ...JSON.parse(raw)};
+  } catch(err){
+    console.warn('No se pudieron leer los ajustes guardados', err);
+    return {...DEFAULT_SETTINGS};
+  }
+}
+function saveSettings(s){
+  // localStorage siempre (funciona en cualquier lado, incluido el server de Python -- y sirve
+  // de respaldo/fallback aunque estemos en NW.js, ver applyStoredSettingsToControls en
+  // spiderswing.html)
+  try{ localStorage.setItem(ARACHNOSWINGER_SETTINGS_KEY, JSON.stringify(s)); }
+  catch(err){ console.warn('No se pudieron guardar los ajustes', err); }
+
+  // y ademas, si estamos en NW.js, el archivo real de controls.json en disco
+  nwjsWriteWorked = writeControlsJSONToDisk(s);
+  refreshNWJSStatus();
+}
+
+let settings = loadSettings();
+
+// ---- toggles NO/SI genericos: se CONECTAN una sola vez (los listeners de click quedan fijos
+// para siempre), y se RE-DIBUJAN aparte cada vez que hace falta reflejar el estado actual de
+// "settings" (al abrir el modal, o despues de borrar datos) -- separarlo asi evita terminar
+// con listeners duplicados por cada apertura del modal ----
+const toggleRefreshers = [];
+function wireToggle(elId, settingKey){
+  const el = document.getElementById(elId);
+  const buttons = [...el.querySelectorAll('button')];
+  function refresh(){
+    const current = String(settings[settingKey]);
+    for(const b of buttons) b.classList.toggle('active', b.dataset.val === current);
+  }
+  for(const b of buttons){
+    b.addEventListener('click', () => {
+      settings[settingKey] = b.dataset.val === 'true';
+      saveSettings(settings);
+      refresh();
+    });
+  }
+  refresh();
+  toggleRefreshers.push(refresh);
+}
+wireToggle('invertToggle', 'invertWebClicks');
+wireToggle('amazingToggle', 'amazing');
+function refreshAllToggles(){ for(const fn of toggleRefreshers) fn(); }
+
+// ---- eleccion de tecla para "modo chill" ----
+const chillKeyBtn = document.getElementById('chillKeyBtn');
+let listeningForChillKey = false;
+
+function refreshChillKeyBtn(){
+  chillKeyBtn.textContent = listeningForChillKey ? 'Presioná una tecla…' : keyLabel(settings.chillKey);
+  chillKeyBtn.classList.toggle('listening', listeningForChillKey);
+}
+refreshChillKeyBtn();
+
+chillKeyBtn.addEventListener('click', () => {
+  listeningForChillKey = true;
+  refreshChillKeyBtn();
+});
+
+window.addEventListener('keydown', (e) => {
+  if(!listeningForChillKey) return;
+  e.preventDefault();
+  if(CHILL_KEY_BLOCKLIST.has(e.code)) return; // tecla no permitida: seguimos escuchando
+  settings.chillKey = e.code;
+  saveSettings(settings);
+  listeningForChillKey = false;
+  refreshChillKeyBtn();
+});
+
+// ---- borrar datos ----
+const wipeBtn = document.getElementById('wipeBtn');
+const wipeConfirmMsg = document.getElementById('wipeConfirmMsg');
+let wipeArmed = false;
+wipeBtn.addEventListener('click', () => {
+  if(!wipeArmed){
+    wipeArmed = true;
+    wipeConfirmMsg.textContent = 'Pulsá de nuevo para confirmar. Esto borra todo.';
+    setTimeout(() => {
+      wipeArmed = false;
+      wipeConfirmMsg.textContent = '';
+    }, 4000);
+    return;
+  }
+  try{ localStorage.clear(); } catch(err){ console.warn('No se pudo limpiar localStorage', err); }
+  settings = {...DEFAULT_SETTINGS};
+  wipeArmed = false;
+  wipeConfirmMsg.textContent = 'Listo, todo borrado.';
+  refreshAllToggles();
+  refreshChillKeyBtn();
+  // si estamos en NW.js, "borrar datos" tambien devuelve controls.json a los defaults (para
+  // que sea un reset de verdad, no solo del navegador)
+  nwjsWriteWorked = writeControlsJSONToDisk(settings);
+  refreshNWJSStatus();
+  setTimeout(() => { wipeConfirmMsg.textContent = ''; }, 2500);
+});
+
+// ---- abrir/cerrar la caja de configuracion ----
+const settingsOverlay = document.getElementById('settingsOverlay');
+function refreshNWJSStatus(){
+  const el = document.getElementById('nwjsStatus');
+  if(!isNWJS){
+    el.textContent = 'Corriendo sin NW.js: los ajustes se guardan solo en este navegador (no se puede tocar controls.json).';
+    el.className = 'off';
+  } else if(nwjsWriteWorked === false){
+    el.textContent = 'NW.js detectado, pero falló al escribir ' + (nwjsResolvedPath || 'habilities/controls.json') + ': ' + (nwjsWriteErrorMsg || 'error desconocido');
+    el.className = 'err';
+  } else {
+    el.textContent = 'NW.js detectado: los ajustes se guardan directo en habilities/controls.json.';
+    el.className = 'ok';
+  }
+}
+
+document.getElementById('settingsBtn').addEventListener('click', () => {
+  settings = loadSettings(); // por si se borraron datos en otra pestaña, etc.
+  refreshAllToggles();
+  refreshChillKeyBtn();
+  refreshNWJSStatus();
+  settingsOverlay.classList.add('open');
+});
+function closeSettings(){
+  listeningForChillKey = false;
+  refreshChillKeyBtn();
+  settingsOverlay.classList.remove('open');
+}
+document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+settingsOverlay.addEventListener('click', (e) => {
+  if(e.target === settingsOverlay) closeSettings(); // click afuera de la caja = cerrar
+});
+
+// ---- tooltips de los circulitos "i" ----
+// un UNICO elemento fixed compartido por los 3 (ver #floatingTooltip en el CSS): asi nunca
+// vive adentro de #settingsBox, que tiene overflow-y:auto y recortaria cualquier tooltip que
+// intentara dibujarse position:absolute adentro suyo apenas se saliera un poco del borde
+const floatingTooltip = document.getElementById('floatingTooltip');
+for(const icon of document.querySelectorAll('.infoIcon')){
+  icon.addEventListener('mouseenter', () => {
+    floatingTooltip.textContent = icon.dataset.tip;
+    floatingTooltip.classList.add('show');
+
+    // se posiciona centrado arriba del icono, y si no entra arriba (icono muy pegado al techo
+    // de la pantalla) se dibuja abajo en cambio -- calculado recien ahora que ya tiene texto,
+    // para medir su ancho/alto reales
+    const iconRect = icon.getBoundingClientRect();
+    const tipRect = floatingTooltip.getBoundingClientRect();
+    let left = iconRect.left + iconRect.width/2 - tipRect.width/2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+
+    const fitsAbove = iconRect.top - tipRect.height - 10 > 0;
+    const top = fitsAbove ? iconRect.top - tipRect.height - 10 : iconRect.bottom + 10;
+
+    floatingTooltip.style.left = left + 'px';
+    floatingTooltip.style.top = top + 'px';
+  });
+  icon.addEventListener('mouseleave', () => {
+    floatingTooltip.classList.remove('show');
+  });
+}
+</script>
+</body>
+</html>
