@@ -1,0 +1,34 @@
+{
+  "chill": [
+    "KeyQ"
+  ],
+  "spiderSense": [
+    "ControlLeft",
+    "ControlRight"
+  ],
+  "weave": [
+    "ShiftLeft",
+    "ShiftRight"
+  ],
+  "buttons": {
+    "webLeft": 0,
+    "webRight": 2,
+    "pull": 1
+  },
+  "webType": "Tobey",
+  "webTypes": {
+    "Andrew": {
+      "label": "Lanzatelarañas",
+      "infinite": false,
+      "maxMeters": {
+        "left": 600,
+        "right": 600
+      },
+      "regenOn": "death"
+    },
+    "Tobey": {
+      "label": "Telarañas orgánicas",
+      "infinite": true
+    }
+  }
+}
