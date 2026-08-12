@@ -9,6 +9,15 @@
   #hud{position:absolute;top:8px;left:8px;color:#fff;font-size:14px;line-height:1.4;
        background:rgba(0,0,0,0.4);padding:8px;border-radius:6px;transition:opacity .15s;}
   #hud.hidden{opacity:0;pointer-events:none;}
+  #pauseOverlay{position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;
+       background:rgba(0,0,0,0.72);color:#fff;font-family:monospace;
+       display:none;flex-direction:column;align-items:center;justify-content:center;}
+  #pauseOverlay.visible{display:flex;}
+  #pauseOverlay h1{color:#4fc3f7;font-size:48px;margin:0 0 12px;letter-spacing:2px;}
+  #pauseOverlay p{font-size:18px;margin:0 0 28px;color:#ccc;}
+  #pauseOverlay button{font-size:18px;padding:10px 26px;border-radius:6px;border:none;
+       background:#4fc3f7;color:#111;cursor:pointer;font-family:monospace;font-weight:bold;}
+  #pauseOverlay button:hover{background:#7dd6ff;}
 </style>
 </head>
 <body>
@@ -23,6 +32,14 @@
   Ctrl: activa/desactiva el sentido arácnido (el tiempo se ralentiza un monton mientras este activo, toca Ctrl de nuevo para volver a la normalidad)<br>
   Tejer: con las dos manos ya enganchadas y tensas, soltando Shift (sin soltar los clicks antes) ambas telarañas se funden en una red persistente por donde podes caminar, se desvanece a los 15s &nbsp;|&nbsp; si soltas un click antes que Shift, esa telaraña cae normal<br>
   P: oculta/muestra este cartel
+</div>
+<!-- overlay de PAUSA: se muestra/oculta con la clase "visible" (ver el ENTER del keydown mas
+     abajo). Es un div de verdad, no dibujado en el canvas, para poder usar un <button> con click
+     nativo del navegador sin tener que armar deteccion de click a mano sobre el canvas -->
+<div id="pauseOverlay">
+  <h1>PAUSA</h1>
+  <p>Pulsá ENTER para seguir jugando</p>
+  <button id="pauseMenuBtn">Volver al menú principal</button>
 </div>
 <!-- physics/manifest.js declara QUE archivos de fisica (gravedad, movimiento, telarañas,
      agarre de pared, colisiones, caidas) cargar -- son sincronicos (document.write), asi que
@@ -49,6 +66,16 @@ const ctx = canvas.getContext('2d');
 function resize(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 window.addEventListener('resize', resize);
 resize();
+
+// ---------- PAUSA (ENTER, fuera de la pantalla de GAME OVER) ----------
+// overlay real (HTML, no canvas): mostrar/ocultar via la clase "visible". El boton usa
+// window.location.href para volver al menu principal (index.html) -- se asume que este archivo
+// (spiderswing.html) vive en la misma carpeta que index.html, igual que el resto de rutas
+// relativas del juego (ver entities/manifest.js, world/manifest.js, etc.)
+const pauseOverlay = document.getElementById('pauseOverlay');
+document.getElementById('pauseMenuBtn').addEventListener('click', () => {
+  window.location.href = 'index.html';
+});
 
 // ---------- SONIDO (Web Audio API, todo sintetizado con osciladores/ruido -- sin archivos
 // externos que cargar) ----------
@@ -430,6 +457,13 @@ const player = {
 // queda congelado -- ver el "if(gameOver) return;" al principio de update() -- hasta que se
 // pulsa ENTER (ver el keydown mas abajo), que recien ahi reaparece en el chunk inicial
 let gameOver = false;
+
+// true mientras esta pausado (ENTER, fuera de la pantalla de GAME OVER): igual que gameOver,
+// congela update() por completo (ver el chequeo al principio de update() mas abajo), pero NO usa
+// gameOver para no disparar por accidente el reset de resetWorld() al des-pausar -- son dos
+// pantallas independientes, cada una con su propio overlay (ver pauseOverlay mas arriba y
+// drawGameOverScreen mas abajo)
+let paused = false;
 
 // resta vida al jugador (clampeada entre 0 y maxHp, y SIEMPRE en numeros enteros: nunca queda
 // la vida en decimales, sin importar que tan fraccionario venga "amount"). Si llega a 0, ya no
@@ -1207,11 +1241,15 @@ window.addEventListener('keydown', e=>{
       if(!e.repeat){ spaceJustPressed = true; regainControlIfPassive(); }
       e.preventDefault(); break;
     case 'Enter':
-      // solo hace algo con la pantalla de GAME OVER puesta: reinicia el mundo entero (mapa,
-      // entidades, autos, todo lo que se haya generado -- ver resetWorld()) y descongela el juego
+      // con GAME OVER puesto: reinicia el mundo entero (mapa, entidades, autos, todo lo que se
+      // haya generado -- ver resetWorld()) y descongela el juego
       if(gameOver && !e.repeat){
         gameOver = false;
         resetWorld();
+      } else if(!gameOver && !e.repeat){
+        // sin GAME OVER: ENTER togglea la pausa (ver "paused" y el corte en update() mas arriba)
+        paused = !paused;
+        pauseOverlay.classList.toggle('visible', paused);
       }
       e.preventDefault(); break;
     case 'KeyP':
@@ -1537,6 +1575,9 @@ function update(dt){
   // con la pantalla de GAME OVER puesta, todo queda congelado (nada se mueve, nada colisiona,
   // nada gasta vida): solo el ENTER del keydown (ver mas abajo) puede sacarte de aca
   if(gameOver) return;
+  // pausado (ENTER, fuera de GAME OVER): mismo congelamiento total, pero sin el reset de
+  // resetWorld() -- solo vuelve a correr cuando se despausa
+  if(paused) return;
 
   // ciudad infinita por chunks: cargamos/descargamos segun donde este el jugador
   updateChunks(player.x);
