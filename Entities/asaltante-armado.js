@@ -16,11 +16,18 @@
 //  diferencias de diseño propias:
 //
 //    - Para disparar le apunta primero a su blanco (se detiene, plantado). Si el blanco es un
-//      civil (tiro de "ataque") tarda ARMED_ATTACK_AIM_WINDUP -- 3 segundos -- apuntando antes de
-//      que salga el tiro, y durante esos 3 segundos el civil apuntado grita (mismo radar de borde
+//      civil (tiro de "ataque") tarda ARMED_ATTACK_AIM_WINDUP -- 5 segundos -- apuntando antes de
+//      que salga el tiro, y durante esos 5 segundos el civil apuntado grita (mismo radar de borde
 //      de pantalla + flechita que ya usan los testigos, para que se note aunque este fuera de
-//      cuadro). Si el blanco es el jugador (tiro de "defensa", ver mas abajo) sigue siendo
-//      instantaneo: solo AIM_WINDUP, un cuarto de segundo.
+//      cuadro) Y ADEMAS queda paralizado en el sitio (ver el freezeo de target.vx en updateAI,
+//      rama 'aiming'): antes seguia caminando su plan de siempre mientras gritaba, y como la bala
+//      viaja en linea recta (no persigue, ver la entidad 'asaltanteArmadoBala' mas abajo) a veces
+//      terminaba pasando de largo si para cuando llegaba el civil ya se habia corrido de lugar --
+//      ese era el bug de "se acaba el timer y la victima no muere". Si en el medio de esos 5s lo
+//      salvan (lo cargan en brazos, lo enganchan con telaraña, o el asaltante muere primero) el
+//      apunte se cancela al toque: el grito y el freeze paran de una, no se quedan pegados de
+//      gorra hasta que se cumplan los 5s enteros. Si el blanco es el jugador (tiro de "defensa",
+//      ver mas abajo) sigue siendo instantaneo: solo AIM_WINDUP, un cuarto de segundo.
 //    - Mientras huye despues de un disparo (haya matado a un civil, o haya
 //      sido el jugador quien le pego a EL) puede, una vez, frenarse un
 //      instante para pegarle un tiro de "defensa" al propio jugador antes de
@@ -54,7 +61,7 @@
 
   // ---------- ajustes de aparicion por chunk: bastante menos seguido que el comun (que
   // subimos de 0.08 a 0.10 en asaltante.js justamente para compensar este nuevo tipo) ----------
-  const ARMED_SPAWN_CHANCE = 0.04; // ~1 de cada 25 chunks
+  const ARMED_SPAWN_CHANCE = 0.025; // ~1 de cada 40 chunks (bajado de 0.04 a pedido, junto con el del comun -- ver ASSAILANT_SPAWN_CHANCE en asaltante.js)
 
   // ---------- movimiento: identico al asaltante comun ----------
   const ARMED_WALK_SPEED_MIN = 40;
@@ -70,7 +77,7 @@
   // ---------- combate a distancia (la pistola): esto es lo nuevo ----------
   const GUN_RANGE          = 460;  // que tan cerca del blanco tiene que estar para plantarse a disparar
   const AIM_WINDUP         = 0.25; // cuarto de segundo parado, apuntando, antes de que salga el tiro DE DEFENSA (al jugador)
-  const ARMED_ATTACK_AIM_WINDUP = 3; // apuntandole a un civil tarda mucho mas -- 3s -- y en ese rato el civil grita (radar)
+  const ARMED_ATTACK_AIM_WINDUP = 5; // apuntandole a un civil tarda mucho mas -- 5s -- y en ese rato el civil grita (radar) y queda paralizado (ver updateAI)
   const ARMED_FLEE_DURATION = 5;   // segundos sin poder atacar de nuevo tras disparar (o tras recibir un golpe) -- un poco mas que el comun (4)
   const ARMED_SEARCH_RADIUS = 900; // no persigue a un civil mas lejos que esto
 
@@ -78,6 +85,11 @@
   const BULLET_HIT_RADIUS    = 5;
   const BULLET_PLAYER_DAMAGE = 30;
   const BULLET_LIFE          = 3; // segundos hasta que se autodestruye si no choco con nada
+
+  // ---------- desenlace del tiro de "ataque" (el que le pega a un civil): igual que un asalto a
+  // mano armada real, no siempre es fatal -- puede matar o dejar herido de gravedad (a 1 hp,
+  // tirado para siempre hasta que lo salves, ver woundCivil en civiles.js). 50/50 por default ----------
+  const ARMED_ATTACK_KILL_CHANCE = 0.5;
 
   // ---------- radares: el de los testigos (civiles cercanos que ven la muerte de otro y
   // gritan) dura un tiempo random distinto cada vez; el del propio disparo (el ruido de la
@@ -133,14 +145,26 @@
       e.life += dt;
 
       if(!e.deflected){
-        // choque con el civil al que le estaba apuntando (si este tiro era de "ataque"): lo mata
-        // directo -- el motor dispara su propio onDeath (la animacion de civiles.js) solo, en
-        // cuanto note hp<=0 al terminar este mismo cuadro
+        // choque con el civil al que le estaba apuntando (si este tiro era de "ataque"): 50/50
+        // (ARMED_ATTACK_KILL_CHANCE) entre matarlo directo o dejarlo herido de gravedad -- a 1 hp,
+        // tirado para siempre (ver woundCivil, expuesta desde civiles.js) hasta que lo cargues/
+        // salves. El motor dispara su propio onDeath (la animacion de civiles.js) solo, en cuanto
+        // note hp<=0 al terminar este mismo cuadro -- eso solo pasa en la rama de matar
         if(e.targetCivil && !e.targetCivil.dead){
           const d = Math.hypot(e.targetCivil.x - e.x, e.targetCivil.y - e.y);
           if(d <= (e.targetCivil.hitRadius||14) + e.hitRadius){
-            e.targetCivil.hp = 0;
-            onGunKillCivil(e.targetCivil, e.shooter);
+            if(Math.random() < ARMED_ATTACK_KILL_CHANCE){
+              e.targetCivil.hp = 0;
+              onGunKillCivil(e.targetCivil, e.shooter);
+            } else if(window.woundCivil){
+              window.woundCivil(e.targetCivil);
+              onGunWoundCivil(e.targetCivil, e.shooter);
+            } else {
+              // civiles.js no llego a cargar (no deberia pasar nunca, pero por las dudas no
+              // dejamos la bala colgada sin resolver nada): mata directo, como antes
+              e.targetCivil.hp = 0;
+              onGunKillCivil(e.targetCivil, e.shooter);
+            }
             e.dead = true;
             return;
           }
@@ -155,10 +179,16 @@
         }
       }
 
-      const margin = 100;
-      const sx = e.x - camera.x, sy = e.y - camera.y;
-      const offscreen = sx < -margin || sx > canvas.width+margin || sy < -margin || sy > canvas.height+margin;
-      if(offscreen || e.life > BULLET_LIFE) e.dead = true;
+      // BUG FIX: antes esto tambien mataba la bala si quedaba fuera de la CAMARA (con 100px de
+      // margen). El problema es que un tiro de "ataque" le puede pegar a un civil hasta a
+      // GUN_RANGE (460px) o el asaltante lo puede perseguir hasta ARMED_SEARCH_RADIUS (900px) --
+      // bastante mas de lo que entra en pantalla. Si el tiro ocurria fuera de camara, la bala
+      // nacia ya "offscreen" y este chequeo la mataba en el primerisimo onUpdate (a 1400px/s un
+      // frame solo avanza ~20px), MUCHO antes de llegar a chocar con el civil o con el jugador --
+      // ese era el bug de "el tiro fuera de camara no mata". BULLET_LIFE (3s = hasta 4200px de
+      // alcance) ya alcanza de sobra para autodestruirla si no choca con nada, asi que el chequeo
+      // de camara no hacia falta para nada mas que romper los tiros fuera de pantalla.
+      if(e.life > BULLET_LIFE) e.dead = true;
     },
 
     // el telarañazo suelto la atraviesa: a partir de aca vuela para otro lado (el que traiga la
@@ -211,14 +241,14 @@
     }
   }
 
-  // ---------- testigos: cuando un tiro de ataque MATA a un civil, todos los civiles vivos y
-  // libres a menos de WITNESS_RADIUS de la victima se vuelven testigos -- cada uno con su propio
-  // radar de duracion random (4 a 7s), apuntando al tirador ----------
+  // ---------- testigos: cuando un tiro de ataque le pega a un civil (lo mate o lo hiera de
+  // gravedad -- ver ARMED_ATTACK_KILL_CHANCE), todos los civiles vivos y libres a menos de
+  // WITNESS_RADIUS de la victima se vuelven testigos -- cada uno con su propio radar de duracion
+  // random (4 a 7s), apuntando al tirador ----------
   let gunWitnesses = []; // {civil, assailant, timer}
   let gunshotRadars = []; // {x, y, timer} -- el "fuego", uno por disparo, sea cual sea el blanco
 
-  function onGunKillCivil(civil, shooter){
-    window.pushAssailantMessage('Un asaltante armado mató a un civil');
+  function recruitGunWitnesses(civil, shooter){
     for(const other of entities){
       if(other === civil || other.type !== 'civil' || other.dead) continue;
       if(other.carried || other.beingReeled || other.state === 'towed') continue;
@@ -230,6 +260,19 @@
         timer: WITNESS_MIN_DURATION + Math.random()*(WITNESS_MAX_DURATION - WITNESS_MIN_DURATION)
       });
     }
+  }
+
+  function onGunKillCivil(civil, shooter){
+    window.pushAssailantMessage('Un asaltante armado mató a un civil');
+    recruitGunWitnesses(civil, shooter);
+  }
+
+  // mismo trato que onGunKillCivil (mismos testigos reclutados: ver un disparo, se pegue o no
+  // fatal, asusta igual a cualquiera cerca), pero para el otro desenlace posible del tiro de
+  // ataque -- ver ARMED_ATTACK_KILL_CHANCE y woundCivil (civiles.js)
+  function onGunWoundCivil(civil, shooter){
+    window.pushAssailantMessage('Un asaltante armado hirió de gravedad a un civil');
+    recruitGunWitnesses(civil, shooter);
   }
 
   function addGunshotRadar(x, y){
@@ -321,11 +364,14 @@
     for(const g of gunshotRadars){
       drawEdgeRadar(ctx, g.x, g.y, FIRE_COLOR, '🔥');
     }
-    // grito del civil apuntado: mientras un asaltante armado este parado apuntandole (los 2s de
+    // grito del civil apuntado: mientras un asaltante armado este parado apuntandole (los 5s de
     // ARMED_ATTACK_AIM_WINDUP), el civil grita -- mismo radar de borde + flechita que un testigo,
     // reusando drawEdgeRadar/drawWitnessPointer tal cual (no hace falta un array propio con timer:
     // el estado ya vive en la entidad misma, asi que esto se apaga solo en cuanto deja de apuntar,
-    // sea porque disparo o porque lo interrumpieron -- ver onDamage/enterFleeing)
+    // sea porque disparo, porque lo salvaron a mitad de camino (ver el chequeo de target valido
+    // en updateAI, rama 'aiming'), o porque el asaltante murio primero -- ver el reseteo de
+    // _huntState en onDeath, sin eso el grito se quedaba pegado durante toda su animacion de
+    // muerte aunque ya estuviera tirado en el piso desvaneciendose)
     for(const en of entities){
       if(en.type !== 'asaltanteArmado' || en.dead) continue;
       if(en._huntState !== 'aiming' || en._aimKind !== 'attack') continue;
@@ -551,8 +597,30 @@
 
     if(e._huntState === 'aiming'){
       e.vx = 0;
-      e._aimTimer -= dt;
       updateFacingAndWalkCycle(e, 0, dt);
+
+      // el tiro de "ataque" (a un civil) es el unico que tiene un blanco que puede dejar de ser
+      // valido a mitad de la cuenta regresiva -- lo pueden salvar (cargandolo en brazos o
+      // enganchandolo con telaraña) mientras grita. En cuanto pasa, cancelamos el apunte de una:
+      // sin esto el asaltante se quedaba plantado apuntando (y el civil gritando y paralizado)
+      // los 5 segundos enteros para terminar disparandole al aire -- ver performShot, que ya
+      // tenia este mismo chequeo como ultimo resguardo, pero solo se enteraba AL FINAL del timer
+      if(e._aimKind === 'attack'){
+        const target = e._aimTarget;
+        if(!target || target.dead || target.carried || target.state === 'towed'){
+          e._huntState = 'hunting';
+          e._aimTarget = null;
+          return;
+        }
+        // paraliza al civil mientras dura el apunte: frenamos su vx CADA cuadro (si no, su propia
+        // IA en civiles.js lo vuelve a acelerar hacia su plan de caminata de siempre un instante
+        // despues). Esto es lo que de verdad arregla el bug de la victima que no muere: al quedar
+        // quieto en el lugar exacto donde le estaban apuntando, la bala (que viaja en linea recta
+        // y no persigue) ya no le puede pasar de largo por haberse movido mientras tanto
+        target.vx = 0;
+      }
+
+      e._aimTimer -= dt;
       if(e._aimTimer <= 0) performShot(e);
       return;
     }
@@ -592,7 +660,7 @@
     const dx = target.x - e.x;
     if(Math.abs(dx) <= GUN_RANGE){
       e._huntState = 'aiming';
-      e._aimTimer = ARMED_ATTACK_AIM_WINDUP; // apuntandole a un civil: 3s largos, gritando (ver HUD_DRAW_LISTENERS)
+      e._aimTimer = ARMED_ATTACK_AIM_WINDUP; // apuntandole a un civil: 5s largos, gritando y paralizado (ver HUD_DRAW_LISTENERS y updateAI)
       e._aimKind = 'attack';
       e._aimTarget = target;
       e.facing = dx >= 0 ? 1 : -1;
@@ -673,6 +741,16 @@
     e.vx = e.deadSide * (30 + Math.random()*25);
     e.vy = 0;
 
+    // si lo matabas justo mientras apuntaba, e.state ya paso a 'dead' (asi que onUpdate corta
+    // derecho a updateDead y nunca vuelve a pasar por la rama 'aiming' de arriba), PERO
+    // _huntState seguia valiendo 'aiming' -- y el chequeo del grito en HUD_DRAW_LISTENERS mas
+    // abajo solo mira eso, no e.state. Sin este reseteo, el civil se quedaba gritando (radar +
+    // flechita) mirando a un asaltante que ya estaba muerto y desvaneciendose en el piso, durante
+    // toda su animacion de muerte (~1s). Limpiando esto aca, el grito para en el mismo cuadro en
+    // el que el asaltante muere, no un segundo despues.
+    e._huntState = null;
+    e._aimTarget = null;
+
     // se borra la entrada entera (no se marca "defeated"): el chunk queda libre para volver a
     // sortear un asaltante armado nuevo la proxima vez que se cargue
     armedChunkState.delete(e._homeChunkIndex);
@@ -687,6 +765,12 @@
   }
 
   function onDamage(en, dmg /*, src */){
+    // si lo estas cargando en brazos (hugging) no tiene sentido que tu propio golpe lo lastime --
+    // se cancela el daño entero (ni siquiera se le resta el fijo de ARMED_HIT_DAMAGE). `en.hp +=
+    // dmg` cancela el `en.hp -= dmg` que dealDamageAt hace justo despues de este hook, asi que
+    // queda intacto
+    if(en.state === 'hugging'){ en.hp += dmg; return; }
+
     const hpBefore = en.hp;
     en.hp += dmg;
     en.hp -= ARMED_HIT_DAMAGE;
@@ -707,22 +791,40 @@
     }
   }
 
+  // BUG FIX: si al asaltante armado lo neutralizan (lo envuelven con un telarañazo SUELTO ->
+  // 'wrapped', o lo enganchan y quedan colgando de el -> 'towed') justo mientras estaba en medio
+  // de un apunte de "ataque" (_huntState==='aiming', los 5s de ARMED_ATTACK_AIM_WINDUP), ninguna
+  // de esas dos transiciones de estado pasa por onDamage NI por la rama 'aiming' de updateAI (de
+  // hecho, dejan de llamar a updateAI del todo mientras dure -- ver 'wrapped'/'towed' mas abajo,
+  // cortan antes de llegar a el). Entonces _huntState se quedaba congelado en 'aiming' PARA
+  // SIEMPRE (o hasta que se desenrede solo), y el civil al que le apuntaba se quedaba gritando
+  // (radar + flechita, ver HUD_DRAW_LISTENERS) aunque el asaltante ya estuviera neutralizado y no
+  // pudiera disparar mas -- el civil ya estaba salvado, pero el susto seguia en pantalla. Se
+  // cancela aca, apenas se detecta la transicion, ANTES de los cortes de 'wrapped'/'towed' de mas
+  // abajo -- misma logica que ya usa unwrapEntity() cuando el envoltorio se termina solo, pero
+  // disparada al momento de la captura en vez de al final.
+  function cancelAimIfInterrupted(e, becomingState){
+    if(e._huntState !== 'aiming') return;
+    if(becomingState !== 'walking') { e._huntState = 'hunting'; e._aimTarget = null; }
+  }
+
   function onUpdate(e, dt){
     if(e.state === 'dead'){ updateDead(e, dt); return; }
-    if(e.state === 'hugging'){ updateHugging(e, dt); return; }
+    if(e.state === 'hugging'){ cancelAimIfInterrupted(e, 'hugging'); updateHugging(e, dt); return; }
 
     const towedNow = (webs.left  && webs.left.state  === 'attached' && webs.left.entity  === e) ||
                       (webs.right && webs.right.state === 'attached' && webs.right.entity === e);
     if(towedNow && e.state !== 'towed'){
       e.state = 'towed';
       e.vx = 0; e.vy = 0;
+      cancelAimIfInterrupted(e, 'towed');
     } else if(!towedNow && e.state === 'towed'){
       if(e.grounded && e.standingPlatform) enterStranded(e);
       else if(e.grounded) e.state = 'walking';
       else e.state = 'falling';
     }
 
-    if(e.state === 'wrapped'){ updateWrapped(e, dt); return; }
+    if(e.state === 'wrapped'){ cancelAimIfInterrupted(e, 'wrapped'); updateWrapped(e, dt); return; }
 
     physicsStep(e, dt);
 
@@ -811,15 +913,26 @@
   // y ya se resolvio -- ver onDeath/CHUNK_UNLOAD_LISTENERS) se vuelve a tirar el dado entero cada
   // vez que el chunk se carga. Si SI tiene entrada, es porque hay un asaltante armado congelado
   // (suspended) esperando a que el jugador vuelva -- ese se respeta y no se resortea nada ----------
+  //
+  // BUG FIX: el `rng` que nos pasa el motor (chunkEntityRng, ver world/rng.js) es DETERMINISTA a
+  // proposito -- mismo chunkIndex siempre da la misma secuencia de numeros, sin importar cuantas
+  // veces se llame. Eso esta perfecto para lo que fue pensado (edificios, poblacion de civiles),
+  // pero rompia el reroll de aca: no importaba cuantas veces borraramos la entrada del mapa al
+  // resolverse (onDeath, policia), el PROXIMO roll para ese mismo chunk iba a repetir EXACTAMENTE
+  // el mismo resultado que la primera vez -- si aparecio una vez, aparecia siempre; si no aparecio
+  // nunca, no iba a aparecer jamas. Por eso este sorteo puntual usa Math.random() en vez del rng
+  // del chunk: es el UNICO que necesita variar de verdad entre visitas (a diferencia de la
+  // posicion de los edificios, que si tiene que ser siempre igual). No afecta nada mas del mundo.
   window.CHUNK_LOAD_LISTENERS.push(function(chunkIndex, startX, endX, rng){
+    void rng; // a proposito sin usar aca -- ver nota de arriba
     if(!asaltanteDef) return;
 
     let st = armedChunkState.get(chunkIndex);
     if(!st){
-      const roll = rng();
+      const roll = Math.random();
       if(roll >= ARMED_SPAWN_CHANCE) return; // no le toco esta vez -- no se guarda nada, asi se
                                               // vuelve a sortear la proxima vez que el chunk cargue
-      const x = startX + 80 + rng()*(endX - startX - 160);
+      const x = startX + 80 + Math.random()*(endX - startX - 160);
       st = {suspended: false, entity: null, x, y: STREET_Y - ARMED_HIT_RADIUS};
       armedChunkState.set(chunkIndex, st);
     }

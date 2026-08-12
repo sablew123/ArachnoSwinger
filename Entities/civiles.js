@@ -690,18 +690,36 @@
     }
   }
 
-  // ---------- tirado en el piso tras salir disparado (ver ejectFromRoll mas abajo) ----------
-  function enterLyingDown(e){
+  // ---------- tirado en el piso tras salir disparado (ver ejectFromRoll mas abajo), o herido de
+  // gravedad de un balazo (ver woundCivil mas abajo, expuesta para asaltante-armado.js) ----------
+  // permanent=true (herido de bala): NO se levanta solo con el timer -- se queda ahi tirado para
+  // siempre, listo para que lo cargues/salves, hasta que decidas que hacer con el. permanent=false
+  // (el default de siempre, aterrizaje fuerte/susto): se levanta solo despues de KNOCKED_LIE_DURATION
+  function enterLyingDown(e, permanent){
     e.state = 'lyingDown';
     e.vx = 0;
     e.lieTimer = KNOCKED_LIE_DURATION;
     e.chatPartner = null;
+    e.downedForGood = !!permanent;
   }
 
   function updateLyingDown(e, dt){
+    if(e.downedForGood) return; // herido de gravedad: no se levanta solo, ver enterLyingDown
     e.lieTimer -= dt;
     if(e.lieTimer <= 0){ e.state = 'walking'; pickNewPlan(e); }
   }
+
+  // ---------- herido de gravedad por un balazo (ver asaltanteArmadoBala en asaltante-armado.js):
+  // lo deja a 1 hp y tirado en el piso para siempre (permanent=true), en vez de matarlo directo --
+  // expuesta para que ese archivo no tenga que reimplementar el estado 'lyingDown' de un civil a
+  // mano (mismo patron que window.dropCivil, aca arriba) ----------
+  function woundCivil(e){
+    if(e.dead || e.state === 'dead') return;
+    e.hp = 1;
+    e.carried = false;
+    enterLyingDown(e, true);
+  }
+  window.woundCivil = woundCivil;
 
   // ---------- el jugador aterrizo RODANDO cargandolos encima: salen disparados hacia el mismo
   // lado, pierden un poco de vida por el golpe, y quedan tirados en el piso hasta que se levantan

@@ -53,7 +53,7 @@
   function pickRandom(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
   // ---------- ajustes de aparicion por chunk ----------
-  const ASSAILANT_SPAWN_CHANCE = 0.10; // ~1 de cada 10 chunks (subido de 0.08: el armado le resta protagonismo -- ver asaltante-armado.js, que aparece bastante menos -- asi que el comun sube un poco para compensar)
+  const ASSAILANT_SPAWN_CHANCE = 0.07; // ~1 de cada 14 chunks (bajado de 0.10 a pedido: entre este y el armado estaban resultando muy seguidos, y a futuro se van a sumar mas variantes de villano que tambien van a querer su propio espacio)
 
   // ---------- ajustes de movimiento: mismas velocidades que ya usa el resto del juego,
   // segun pide el diseño ("camina como un civil", "corre como camina el prota") ----------
@@ -464,6 +464,12 @@
   // pasar): se pisa el daño real (8 del puño / 14 de la patada) por el valor fijo que pide el
   // diseño (2 por golpe, sea cual sea), y cualquier golpe lo asusta y lo hace huir
   function onDamage(en, dmg /*, src */){
+    // si lo estas cargando en brazos (hugging) no tiene sentido que tu propio golpe lo lastime --
+    // se cancela el daño entero (ni siquiera se le resta el fijo de ASSAILANT_HIT_DAMAGE) y no
+    // dispara huida ni caida. `en.hp += dmg` cancela el `en.hp -= dmg` que dealDamageAt hace justo
+    // despues de este hook, asi que queda intacto
+    if(en.state === 'hugging'){ en.hp += dmg; return; }
+
     const hpBefore = en.hp;
     en.hp += dmg;                    // cancela el `en.hp -= dmg` que dealDamageAt va a hacer JUSTO despues de este hook
     en.hp -= ASSAILANT_HIT_DAMAGE;   // nuestro propio valor fijo
@@ -599,17 +605,27 @@
   // cero y puede tocarle uno nuevo ----------
   const assailantChunkState = new Map(); // chunkIndex -> {suspended, entity, x, y}
 
+  // BUG FIX: el `rng` que nos pasa el motor (chunkEntityRng, ver world/rng.js) es DETERMINISTA a
+  // proposito -- mismo chunkIndex siempre da la misma secuencia de numeros, sin importar cuantas
+  // veces se llame. Perfecto para lo que fue pensado (edificios, poblacion de civiles), pero
+  // rompia el reroll de aca: no importaba cuantas veces borraramos la entrada del mapa al
+  // resolverse (onDeath, policia), el PROXIMO roll para ese mismo chunk repetia SIEMPRE el mismo
+  // resultado que la primera vez -- si aparecio una vez, aparecia para siempre; si no aparecio
+  // nunca, no iba a aparecer jamas. Por eso este sorteo puntual usa Math.random() en vez del rng
+  // del chunk: es el UNICO que necesita variar de verdad entre visitas (a diferencia de la
+  // posicion de los edificios, que si tiene que ser siempre igual). No afecta nada mas del mundo.
   window.CHUNK_LOAD_LISTENERS.push(function(chunkIndex, startX, endX, rng){
+    void rng; // a proposito sin usar aca -- ver nota de arriba
     if(!civilDef) return; // el tipo no llego a registrarse: no hay nada que aparecer
 
     let st = assailantChunkState.get(chunkIndex);
     if(!st){
       // no hay entrada: o nunca le toco, o le toco y ya se resolvio -- en cualquier caso se tira
-      // la moneda de nuevo con el rng propio de este chunk
-      const roll = rng();
+      // la moneda de nuevo, esta vez con Math.random() (ver nota de arriba)
+      const roll = Math.random();
       if(roll >= ASSAILANT_SPAWN_CHANCE) return; // no le toco esta vez -- no se guarda nada, asi se
                                                   // vuelve a sortear la proxima vez que el chunk cargue
-      const x = startX + 80 + rng()*(endX - startX - 160);
+      const x = startX + 80 + Math.random()*(endX - startX - 160);
       st = {suspended: false, entity: null, x, y: STREET_Y - ASSAILANT_HIT_RADIUS};
       assailantChunkState.set(chunkIndex, st);
     }
