@@ -90,6 +90,214 @@
     background:rgba(214,69,69,0.55);
   }
 
+  /* ---- boton de personalizar skin, esquina superior IZQUIERDA (simetrico a #settingsBtn) ---- */
+  #skinBtn{
+    position:absolute; top:22px; left:22px;
+    width:48px; height:48px;
+    border-radius:50%;
+    border:2px solid #c9c9c9;
+    background:rgba(20,20,24,0.55);
+    color:#e2e2e2;
+    font-size:20px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    pointer-events:auto;
+    transition:transform .12s ease, border-color .12s ease, background .12s ease;
+  }
+  #skinBtn:hover{
+    transform:rotate(-20deg) scale(1.08);
+    border-color:#ff6b6b;
+    background:rgba(214,69,69,0.55);
+  }
+
+  /* ---- overlay/modal de personalizacion de skin (mismo patron visual que #settingsOverlay,
+     pero mas ancho porque necesita lugar para el editor de pintado) ---- */
+  #skinOverlay{
+    position:absolute; inset:0;
+    background:rgba(0,0,0,0.55);
+    display:none;
+    align-items:center; justify-content:center;
+    z-index:20;
+    pointer-events:auto;
+  }
+  #skinOverlay.open{ display:flex; }
+  #skinBox{
+    width:min(780px, 95vw);
+    max-height:90vh;
+    overflow-y:auto;
+    background:#1b1b20;
+    border:2px solid #d64545;
+    border-radius:14px;
+    box-shadow:0 0 40px rgba(214,69,69,0.35);
+    padding:26px 26px 20px;
+    font-family:'Trebuchet MS', Verdana, sans-serif;
+    color:#e2e2e2;
+  }
+  #skinBox h2{
+    margin:0 0 6px;
+    font-size:24px;
+    letter-spacing:1px;
+    color:#e2e2e2;
+    -webkit-text-stroke:1px #d64545;
+    text-align:center;
+  }
+  #skinSubtitle{
+    text-align:center;
+    font-size:12px;
+    color:#9a9a9a;
+    margin:0 0 20px;
+  }
+  #skinLayout{
+    display:flex;
+    gap:22px;
+    flex-wrap:wrap;
+  }
+  #skinSegmentList{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    min-width:160px;
+  }
+  .skinSegBtn{
+    font-family:inherit;
+    font-weight:700;
+    font-size:13px;
+    letter-spacing:0.5px;
+    padding:11px 12px;
+    border-radius:8px;
+    border:2px solid #6b6b6b;
+    background:transparent;
+    color:#c9c9c9;
+    cursor:pointer;
+    text-align:left;
+    transition:border-color .12s ease, background .12s ease, color .12s ease;
+  }
+  .skinSegBtn:hover{ border-color:#e2e2e2; color:#e2e2e2; }
+  .skinSegBtn.active{
+    background:#d64545;
+    border-color:#ff6b6b;
+    color:#fff;
+  }
+  #skinEditorArea{
+    flex:1;
+    min-width:290px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:14px;
+  }
+  #skinCanvas{
+    width:290px; height:290px;
+    border-radius:12px;
+    background:#0e0e11;
+    border:2px solid #3a3a3a;
+    cursor:crosshair;
+    touch-action:none;
+  }
+  .skinControlsRow{
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:18px;
+    flex-wrap:wrap;
+  }
+  .skinColorLabel, .skinThicknessLabel{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:12.5px;
+    font-weight:700;
+    letter-spacing:0.5px;
+    color:#c9c9c9;
+  }
+  .skinColorLabel input[type="color"]{
+    width:36px; height:28px;
+    border:2px solid #6b6b6b;
+    border-radius:6px;
+    background:none;
+    cursor:pointer;
+    padding:0;
+  }
+  .skinThicknessLabel input[type="range"]{
+    width:120px;
+  }
+  #skinClearBtn{
+    font-family:inherit;
+    font-weight:700;
+    font-size:12.5px;
+    letter-spacing:1px;
+    padding:8px 16px;
+    border-radius:8px;
+    border:2px solid #6b6b6b;
+    background:transparent;
+    color:#e2e2e2;
+    cursor:pointer;
+  }
+  #skinClearBtn:hover{ border-color:#e2e2e2; }
+
+  #skinDivider{
+    border:none;
+    border-top:1px solid #3a3a3a;
+    margin:20px 0 16px;
+  }
+  #skinStatus{
+    text-align:center;
+    font-size:11px;
+    margin:0 0 16px;
+    line-height:1.4;
+    word-break:break-word;
+  }
+  #skinStatus.ok{ color:#5fbf7a; }
+  #skinStatus.off{ color:#7a7a7a; }
+  #skinStatus.err{ color:#e0c23c; }
+
+  #skinSaveBtn{
+    width:100%;
+    font-family:inherit;
+    font-weight:800;
+    font-size:14px;
+    letter-spacing:2px;
+    padding:12px;
+    border-radius:8px;
+    border:2px solid #6b6b6b;
+    background:transparent;
+    color:#c9c9c9;
+    cursor:pointer;
+    transition:border-color .12s ease, color .12s ease, background .12s ease;
+  }
+  #skinSaveBtn:hover{
+    border-color:#5fbf7a;
+    color:#fff;
+    background:rgba(95,191,122,0.65);
+  }
+
+  /* switch de "usar skin en el juego" -- mismo patron visual que el .toggle NO/SI de mas
+     arriba, reutilizado tal cual */
+  #skinEnabledRow{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+    margin:4px 0 16px;
+    font-size:13px;
+    font-weight:700;
+    letter-spacing:0.3px;
+  }
+
+  #closeSkinBtn{
+    display:block;
+    margin:4px auto 0;
+    background:none;
+    border:none;
+    color:#9a9a9a;
+    font-size:13px;
+    letter-spacing:1px;
+    cursor:pointer;
+    padding:6px 10px;
+  }
+  #closeSkinBtn:hover{ color:#e2e2e2; }
+
   /* ---- overlay/modal de configuracion ---- */
   #settingsOverlay{
     position:absolute; inset:0;
@@ -283,6 +491,53 @@
 <canvas id="c"></canvas>
 
 <button id="settingsBtn" title="Configuración">⚙</button>
+<button id="skinBtn" title="Personalizar personaje">🎨</button>
+
+<div id="skinOverlay">
+  <div id="skinBox">
+    <h2>Personalizar personaje</h2>
+    <div id="skinSubtitle">Elegí una parte del cuerpo, pintala de un color solido y dibujá encima con el pincel</div>
+
+    <div id="skinLayout">
+      <div id="skinSegmentList"><!-- se llena por JS, uno por segmento --></div>
+
+      <div id="skinEditorArea">
+        <canvas id="skinCanvas" width="320" height="320"></canvas>
+
+        <div class="skinControlsRow">
+          <label class="skinColorLabel">
+            Color base
+            <input type="color" id="skinBaseColor" value="#c0392b">
+          </label>
+          <label class="skinColorLabel">
+            Color de pincel
+            <input type="color" id="skinBrushColor" value="#8f0d0d">
+          </label>
+        </div>
+        <div class="skinControlsRow">
+          <label class="skinThicknessLabel">
+            Grosor
+            <input type="range" id="skinBrushSize" min="1" max="30" value="6">
+          </label>
+          <button id="skinClearBtn">Limpiar dibujo</button>
+        </div>
+      </div>
+    </div>
+
+    <hr id="skinDivider">
+    <div id="skinEnabledRow">
+      <span>¿Mostrar la skin puesta en el juego?</span>
+      <div class="toggle" id="skinEnabledToggle">
+        <button data-val="false">NO</button>
+        <button data-val="true">SÍ</button>
+      </div>
+    </div>
+    <div id="skinStatus"></div>
+
+    <button id="skinSaveBtn">GUARDAR SKIN</button>
+    <button id="closeSkinBtn">cerrar</button>
+  </div>
+</div>
 
 <div id="settingsOverlay">
   <div id="settingsBox">
@@ -1041,6 +1296,18 @@ wipeBtn.addEventListener('click', () => {
   // que sea un reset de verdad, no solo del navegador)
   nwjsWriteWorked = writeControlsJSONToDisk(settings);
   refreshNWJSStatus();
+
+  // la skin pintada tambien se borra: localStorage.clear() de arriba ya se llevo puesta la
+  // clave arachnoswinger:skin, pero ademas hay que (1) resetear el estado en memoria del editor
+  // -- si el modal de skin esta abierto en este momento, que se vea en blanco al toque, no
+  // recien la proxima vez que se abra -- y (2) si hay NW.js, pisar tambien
+  // skins/playerSkin.json en disco con los defaults, mismo criterio que controls.json arriba
+  skinData = defaultSkinData();
+  for(const key of Object.keys(skinDrawingCanvases)) delete skinDrawingCanvases[key];
+  selectSkinSegment(currentSkinSegment);
+  skinWriteWorked = writeSkinJSONToDisk(skinData);
+  refreshSkinStatus();
+
   setTimeout(() => { wipeConfirmMsg.textContent = ''; }, 2500);
 });
 
@@ -1105,6 +1372,339 @@ for(const icon of document.querySelectorAll('.infoIcon')){
     floatingTooltip.classList.remove('show');
   });
 }
+
+// ==========================================================================
+// PERSONALIZACION DE SKIN -- pintar cada segmento del monigote (cabeza, torso, brazos,
+// piernas) con un color solido y, encima, un dibujo libre a pincel basico (solo control de
+// grosor, color solido). Cada segmento se edita por separado con su propia silueta de
+// referencia (circulo para la cabeza, capsula para el resto), porque en el juego real cada uno
+// se dibuja distinto segun el estado (caminando/colgado/en el aire, ver player.js) y no tendria
+// sentido pintar sobre una sola pose fija que no representa a todos.
+//
+// Se guarda SIEMPRE en localStorage (funciona en cualquier lado) y, ademas, si estamos en
+// NW.js (ver isNWJS mas arriba), tambien en skins/playerSkin.json en disco de verdad -- se crea
+// la carpeta y el archivo solos si todavia no existen (mismo patron que
+// writeControlsJSONToDisk/resolveGameDir de mas arriba, que reutilizamos tal cual).
+//
+// IMPORTANTE: esto todavia NO se usa para dibujar al jugador en el juego real -- spiderswing.html
+// y player.js siguen dibujando el monigote liso de siempre. Esto solo junta y guarda los datos
+// (color base + PNG del dibujo, por segmento), listos para conectarse mas adelante.
+// ==========================================================================
+const ARACHNOSWINGER_SKIN_KEY = 'arachnoswinger:skin';
+const SKIN_FILE_REL_PATH = ['skins', 'playerSkin.json']; // gameDir/skins/playerSkin.json
+
+const SKIN_SEGMENTS = [
+  {key:'head',      label:'Cabeza',            shape:'circle'},
+  {key:'torso',     label:'Torso',             shape:'capsule'},
+  {key:'armLeft',   label:'Brazo izquierdo',   shape:'capsule'},
+  {key:'armRight',  label:'Brazo derecho',     shape:'capsule'},
+  {key:'legLeft',   label:'Pierna izquierda',  shape:'capsule'},
+  {key:'legRight',  label:'Pierna derecha',    shape:'capsule'}
+];
+const SKIN_DEFAULT_BASE_COLOR = '#c0392b'; // mismo rojo que ya usa el monigote hoy
+const SKIN_CANVAS_SIZE = 320; // debe coincidir con el width/height del <canvas id="skinCanvas">
+
+function defaultSkinData(){
+  const data = {enabled: true}; // "enabled" = si el juego real la aplica o no (el switch NO/SI del modal); no es un segmento
+  for(const seg of SKIN_SEGMENTS) data[seg.key] = {color: SKIN_DEFAULT_BASE_COLOR, drawing: null};
+  return data;
+}
+
+// arma en el ctx dado el contorno (path) del segmento actual -- circulo grande para la cabeza,
+// "capsula" HORIZONTAL (largo en X) para todo lo demas: el rectangulo con las dos puntas
+// totalmente redondeadas, imitando el lineCap:'round' que ya usan esos trazos en el dibujo real
+// del monigote. Horizontal (no vertical) a proposito: asi en el juego (ver stampSkinLimb en
+// player.js) el eje X del sprite mapea directo al LARGO del segmento y el eje Y a su GROSOR,
+// sin tener que rotar la imagen 90 grados aparte
+function buildSegmentPath(sctx, shape){
+  const c = SKIN_CANVAS_SIZE;
+  sctx.beginPath();
+  if(shape === 'circle'){
+    sctx.arc(c/2, c/2, c*0.34, 0, Math.PI*2);
+  } else {
+    const h = c*0.32, w = c*0.82, r = h/2;
+    const x = c/2 - w/2, y = c/2 - h/2;
+    sctx.moveTo(x+r, y);
+    sctx.lineTo(x+w-r, y);
+    sctx.arc(x+w-r, y+r, r, -Math.PI/2, Math.PI/2);
+    sctx.lineTo(x+r, y+h);
+    sctx.arc(x+r, y+r, r, Math.PI/2, Math.PI*1.5);
+    sctx.closePath();
+  }
+}
+
+// ---- carpeta/archivo en disco (solo NW.js) -- reutiliza isNWJS y resolveGameDir(), ya
+// definidos mas arriba para habilities/controls.json ----
+function readSkinJSONFromDisk(){
+  if(!isNWJS) return null;
+  try{
+    const fs = require('fs');
+    const path = require('path');
+    const gameDir = resolveGameDir();
+    if(!gameDir) return null;
+    const filePath = path.join(gameDir, ...SKIN_FILE_REL_PATH);
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch(err){
+    return null; // no existe todavia, esta corrupto, o no se pudo leer -- seguimos con localStorage/defaults
+  }
+}
+
+let skinWriteWorked = null;
+let skinWriteErrorMsg = '';
+function writeSkinJSONToDisk(data){
+  if(!isNWJS) return false;
+  skinWriteErrorMsg = '';
+  try{
+    const fs = require('fs');
+    const path = require('path');
+    const gameDir = resolveGameDir();
+    if(!gameDir){
+      skinWriteErrorMsg = 'No se pudo determinar la carpeta del juego en disco';
+      return false;
+    }
+    const dir = path.join(gameDir, SKIN_FILE_REL_PATH[0]);
+    const filePath = path.join(dir, SKIN_FILE_REL_PATH[1]);
+    fs.mkdirSync(dir, {recursive:true}); // crea la carpeta skins/ si todavia no existe
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8'); // crea el archivo si todavia no existe
+    return true;
+  } catch(err){
+    skinWriteErrorMsg = (err && err.code ? '[' + err.code + '] ' : '') + (err && err.message ? err.message : String(err));
+    console.warn('No se pudo escribir ' + SKIN_FILE_REL_PATH.join('/') + ' en disco:', err);
+    return false;
+  }
+}
+
+function loadSkinData(){
+  // 1) si estamos en NW.js y el archivo ya existe en disco, esa es la fuente de verdad
+  if(isNWJS){
+    const fromDisk = readSkinJSONFromDisk();
+    if(fromDisk) return {...defaultSkinData(), ...fromDisk};
+  }
+  // 2) si no (o no habia archivo todavia), localStorage -- funciona en cualquier lado, y es el
+  //    respaldo aunque haya NW.js
+  try{
+    const raw = localStorage.getItem(ARACHNOSWINGER_SKIN_KEY);
+    if(raw) return {...defaultSkinData(), ...JSON.parse(raw)};
+  } catch(err){ console.warn('No se pudo leer la skin guardada', err); }
+  return defaultSkinData();
+}
+
+let skinData = loadSkinData();
+let currentSkinSegment = SKIN_SEGMENTS[0].key;
+const skinDrawingCanvases = {}; // key -> <canvas> offscreen con SOLO el dibujo a pincel de ese segmento (fondo transparente)
+
+function getSegmentDrawingCanvas(key){
+  if(!skinDrawingCanvases[key]){
+    const c = document.createElement('canvas');
+    c.width = SKIN_CANVAS_SIZE; c.height = SKIN_CANVAS_SIZE;
+    skinDrawingCanvases[key] = c;
+  }
+  return skinDrawingCanvases[key];
+}
+
+// precarga (async, son <img>) los dibujos ya guardados en skinData hacia sus canvas offscreen
+// correspondientes -- si el segmento cargado es el que esta abierto ahora mismo en el editor,
+// se re-dibuja el canvas visible apenas termina de cargar
+function hydrateSkinDrawingCanvases(){
+  for(const seg of SKIN_SEGMENTS){
+    const d = skinData[seg.key];
+    if(d && d.drawing){
+      const img = new Image();
+      img.onload = () => {
+        const canvas = getSegmentDrawingCanvas(seg.key);
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        if(currentSkinSegment === seg.key) renderSkinCanvas();
+      };
+      img.src = d.drawing;
+    }
+  }
+}
+hydrateSkinDrawingCanvases();
+
+// redibuja el canvas VISIBLE del editor: recorta a la silueta del segmento actual, la rellena
+// con su color base, encima pega su dibujo a pincel, y por fuera del recorte dibuja un contorno
+// tenue para que se note bien el limite pintable
+function renderSkinCanvas(){
+  const canvas = document.getElementById('skinCanvas');
+  const sctx = canvas.getContext('2d');
+  sctx.clearRect(0,0,SKIN_CANVAS_SIZE,SKIN_CANVAS_SIZE);
+
+  const seg = SKIN_SEGMENTS.find(s => s.key === currentSkinSegment);
+  const data = skinData[currentSkinSegment];
+
+  sctx.save();
+  buildSegmentPath(sctx, seg.shape);
+  sctx.clip();
+  sctx.fillStyle = data.color;
+  sctx.fillRect(0,0,SKIN_CANVAS_SIZE,SKIN_CANVAS_SIZE);
+  sctx.drawImage(getSegmentDrawingCanvas(currentSkinSegment), 0, 0);
+  sctx.restore();
+
+  buildSegmentPath(sctx, seg.shape);
+  sctx.strokeStyle = 'rgba(226,226,226,0.5)';
+  sctx.lineWidth = 2;
+  sctx.stroke();
+}
+
+function skinCanvasPointFromEvent(e){
+  const canvas = document.getElementById('skinCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+  return {x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY};
+}
+function isInsideCurrentSegmentShape(pt){
+  const canvas = document.getElementById('skinCanvas');
+  const sctx = canvas.getContext('2d');
+  const seg = SKIN_SEGMENTS.find(s => s.key === currentSkinSegment);
+  buildSegmentPath(sctx, seg.shape);
+  return sctx.isPointInPath(pt.x, pt.y);
+}
+
+// pinta un trazo (o un punto, si from===to) del pincel directo sobre el canvas offscreen de
+// dibujo del segmento actual, y refresca el canvas visible
+function paintSkinStroke(from, to){
+  const canvas = getSegmentDrawingCanvas(currentSkinSegment);
+  const dctx = canvas.getContext('2d');
+  dctx.strokeStyle = document.getElementById('skinBrushColor').value;
+  dctx.lineWidth = Number(document.getElementById('skinBrushSize').value);
+  dctx.lineCap = 'round';
+  dctx.lineJoin = 'round';
+  dctx.beginPath();
+  dctx.moveTo(from.x, from.y);
+  dctx.lineTo(to.x, to.y);
+  dctx.stroke();
+  renderSkinCanvas();
+}
+
+let skinIsDrawing = false;
+let skinLastPt = null;
+const skinCanvasEl = document.getElementById('skinCanvas');
+skinCanvasEl.addEventListener('pointerdown', (e) => {
+  const pt = skinCanvasPointFromEvent(e);
+  if(!isInsideCurrentSegmentShape(pt)) return; // afuera de la silueta: no arranca a pintar
+  skinIsDrawing = true;
+  skinLastPt = pt;
+  skinCanvasEl.setPointerCapture(e.pointerId);
+  paintSkinStroke(pt, pt); // asi un click simple (sin arrastrar) ya deja un puntito
+});
+skinCanvasEl.addEventListener('pointermove', (e) => {
+  if(!skinIsDrawing) return;
+  const pt = skinCanvasPointFromEvent(e);
+  paintSkinStroke(skinLastPt, pt);
+  skinLastPt = pt;
+});
+function endSkinStroke(){
+  if(!skinIsDrawing) return;
+  skinIsDrawing = false;
+  skinLastPt = null;
+  persistSkinData(); // guarda solo (localStorage siempre + disco si hay NW.js) al soltar el trazo
+}
+skinCanvasEl.addEventListener('pointerup', endSkinStroke);
+skinCanvasEl.addEventListener('pointerleave', endSkinStroke);
+skinCanvasEl.addEventListener('pointercancel', endSkinStroke);
+
+// ---- lista de segmentos (botones, uno por parte del cuerpo) ----
+const skinSegmentListEl = document.getElementById('skinSegmentList');
+for(const seg of SKIN_SEGMENTS){
+  const btn = document.createElement('button');
+  btn.className = 'skinSegBtn';
+  btn.dataset.key = seg.key;
+  btn.textContent = seg.label;
+  btn.addEventListener('click', () => selectSkinSegment(seg.key));
+  skinSegmentListEl.appendChild(btn);
+}
+function selectSkinSegment(key){
+  currentSkinSegment = key;
+  document.getElementById('skinBaseColor').value = skinData[key].color;
+  for(const btn of skinSegmentListEl.querySelectorAll('.skinSegBtn')){
+    btn.classList.toggle('active', btn.dataset.key === key);
+  }
+  renderSkinCanvas();
+}
+
+document.getElementById('skinBaseColor').addEventListener('input', () => {
+  skinData[currentSkinSegment].color = document.getElementById('skinBaseColor').value;
+  renderSkinCanvas();
+  persistSkinData();
+});
+document.getElementById('skinClearBtn').addEventListener('click', () => {
+  getSegmentDrawingCanvas(currentSkinSegment).getContext('2d').clearRect(0,0,SKIN_CANVAS_SIZE,SKIN_CANVAS_SIZE);
+  renderSkinCanvas();
+  persistSkinData();
+});
+document.getElementById('skinSaveBtn').addEventListener('click', () => {
+  persistSkinData();
+});
+
+// ---- switch "¿mostrar la skin puesta en el juego?" -- apaga/prende la skin SIN borrar el
+// color/dibujo de los segmentos: el pintado queda guardado igual, esto solo le dice a
+// spiderswing.html si aplicarlo o no (ver loadPlayerSkin ahi). Asi el prota vuelve a verse
+// liso de toque sin perder el trabajo, y se puede prender de nuevo cuando quieras ----
+const skinEnabledToggle = document.getElementById('skinEnabledToggle');
+const skinEnabledButtons = [...skinEnabledToggle.querySelectorAll('button')];
+function refreshSkinEnabledToggle(){
+  const current = String(skinData.enabled !== false); // default true si no esta seteado
+  for(const b of skinEnabledButtons) b.classList.toggle('active', b.dataset.val === current);
+}
+for(const b of skinEnabledButtons){
+  b.addEventListener('click', () => {
+    skinData.enabled = b.dataset.val === 'true';
+    refreshSkinEnabledToggle();
+    persistSkinData();
+  });
+}
+
+// vuelca cada canvas offscreen (los que ya se tocaron esta sesion) a PNG base64 dentro de
+// skinData, para que quede todo junto y listo para guardar
+function syncSkinDataFromCanvases(){
+  for(const key of Object.keys(skinDrawingCanvases)){
+    skinData[key].drawing = skinDrawingCanvases[key].toDataURL('image/png');
+  }
+}
+
+function persistSkinData(){
+  syncSkinDataFromCanvases();
+  try{ localStorage.setItem(ARACHNOSWINGER_SKIN_KEY, JSON.stringify(skinData)); }
+  catch(err){ console.warn('No se pudo guardar la skin en localStorage', err); }
+
+  skinWriteWorked = writeSkinJSONToDisk(skinData);
+  refreshSkinStatus();
+}
+
+function refreshSkinStatus(){
+  const el = document.getElementById('skinStatus');
+  if(!isNWJS){
+    el.textContent = 'Corriendo sin NW.js: la skin se guarda solo en este navegador (no se puede escribir ' + SKIN_FILE_REL_PATH.join('/') + ').';
+    el.className = 'off';
+  } else if(skinWriteWorked === false){
+    el.textContent = 'NW.js detectado, pero falló al escribir ' + SKIN_FILE_REL_PATH.join('/') + ': ' + (skinWriteErrorMsg || 'error desconocido');
+    el.className = 'err';
+  } else if(skinWriteWorked === true){
+    el.textContent = 'Guardado en ' + SKIN_FILE_REL_PATH.join('/') + '.';
+    el.className = 'ok';
+  } else {
+    el.textContent = 'NW.js detectado: se guarda directo en ' + SKIN_FILE_REL_PATH.join('/') + '.';
+    el.className = 'ok';
+  }
+}
+
+// ---- abrir/cerrar el modal de skin ----
+const skinOverlay = document.getElementById('skinOverlay');
+document.getElementById('skinBtn').addEventListener('click', () => {
+  refreshSkinStatus();
+  refreshSkinEnabledToggle();
+  skinOverlay.classList.add('open');
+});
+function closeSkin(){
+  skinOverlay.classList.remove('open');
+}
+document.getElementById('closeSkinBtn').addEventListener('click', closeSkin);
+skinOverlay.addEventListener('click', (e) => {
+  if(e.target === skinOverlay) closeSkin(); // click afuera de la caja = cerrar
+});
+
+selectSkinSegment(currentSkinSegment); // primer dibujo del canvas, aunque el modal arranque cerrado
+refreshSkinEnabledToggle();
 </script>
 </body>
 </html>

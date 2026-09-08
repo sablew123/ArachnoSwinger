@@ -55,10 +55,27 @@
 <!-- manifest.js declara QUE archivos de entidades (civiles, villanos, etc.) cargar; hoy esta
      vacio, es el unico archivo que hay que editar cuando existan de verdad, ver ese archivo -->
 <script src="entities/manifest.js"></script>
+<!-- entities/engine.js: el motor GENERICO de entidades (registerEntityType, spawnEntity,
+     updateEntities, drawEntities, loadEntityScript, loadAllEntityFiles, entityProjectiles,
+     dealDamageAt, dealDamageAlongReach, etc.) -- antes vivia inline en el script principal de
+     este HTML, se saco a su propio archivo dentro de entities/ (ver ese archivo para el
+     detalle). ORDEN CRITICO: tiene que cargarse DESPUES de entities/manifest.js (lee
+     window.ENTITY_MANIFEST apenas se ejecuta) y ANTES del script principal de mas abajo, que
+     depende de todo lo que este archivo define -- no lo muevas de aca sin leer el comentario
+     de arriba de entities/engine.js -->
+<script src="entities/engine.js"></script>
 <!-- habilities/manifest.js declara QUE archivos de habilidades (las que se disparan con
      botones/teclas: telaraña, jalon, tejer, golpes, agarre de pared, sentido aracnido, chill)
      cargar, y el JSON de controles que las gobierna -- ver ese archivo -->
 <script src="habilities/manifest.js"></script>
+<!-- render/manifest.js declara QUE archivos de render (cielo, HUD) cargar -- tambien sincronico
+     (document.write), mismo motivo que physics/manifest.js y world/manifest.js. Es el UNICO
+     archivo que hay que editar para agregar/quitar un modulo de render, ver ese archivo -->
+<script src="render/manifest.js"></script>
+<!-- audio/manifest.js declara QUE archivos de audio (todo sintetizado con Web Audio API) cargar
+     -- tambien sincronico (document.write), mismo motivo que los demas manifest. Es el UNICO
+     archivo que hay que editar para agregar/quitar un modulo de audio, ver ese archivo -->
+<script src="audio/manifest.js"></script>
 <script>
 // ---------- SETUP ----------
 const canvas = document.getElementById('c');
@@ -77,153 +94,10 @@ document.getElementById('pauseMenuBtn').addEventListener('click', () => {
   window.location.href = 'index.html';
 });
 
-// ---------- SONIDO (Web Audio API, todo sintetizado con osciladores/ruido -- sin archivos
-// externos que cargar) ----------
-// un solo AudioContext compartido para todo el juego. Los navegadores no dejan arrancar audio
-// sin que haya habido antes un gesto del usuario (click/tecla), asi que lo creamos recien en
-// el primer mousedown/keydown (y lo "resumimos" ahi tambien, por si Chrome lo crea pausado)
-let actx = null;
-function getAudioCtx(){
-  if(!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  if(actx.state === 'suspended') actx.resume();
-  return actx;
-}
-window.addEventListener('mousedown', () => getAudioCtx(), {once:true});
-window.addEventListener('keydown', () => getAudioCtx(), {once:true});
-
-// ---- zumbido de "te estas por estampar" (aviso de caida) ----
-// nada de pitido liso tipo piiii: es un zumbido aspero, agudo y suave, mas tipo "trrrrr".
-// se arma con un oscilador diente-de-sierra (el zumbido en si, suavizado con un filtro pasa-
-// bajos) cuyo volumen un segundo oscilador (LFO) empuja rapido arriba/abajo ~30 veces por
-// segundo -- eso es lo que rompe el tono liso en el traqueteo del "rrrrr" en vez de sonar
-// como un pitido de microondas. Los osciladores quedan CORRIENDO SIEMPRE de fondo (es gratis,
-// no gastan nada en silencio) y lo unico que prendemos/apagamos es una ultima ganancia
-// (enableGain), con una rampa cortita para que no truene un click al prender/apagar
-let fallWarningNodes = null;
-function initFallWarningBuzz(){
-  const ac = getAudioCtx();
-  const carrier = ac.createOscillator();
-  carrier.type = 'sawtooth';
-  carrier.frequency.value = 1900; // agudo
-
-  const filter = ac.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.value = 3400; // le saca el filo mas duro/metalico al diente de sierra
-  filter.Q.value = 0.6;
-
-  const lfo = ac.createOscillator();
-  lfo.type = 'square';
-  lfo.frequency.value = 32; // velocidad del traqueteo "rrrrr" (pulsos por segundo)
-
-  const lfoGain = ac.createGain();
-  lfoGain.gain.value = 0.35;
-
-  const tremolo = ac.createGain();
-  tremolo.gain.value = 0.65; // el LFO hace que este gain oscile entre ~0.3 y ~1.0 (nunca en 0 seco)
-
-  const enableGain = ac.createGain();
-  enableGain.gain.value = 0; // arranca en silencio total
-
-  lfo.connect(lfoGain);
-  lfoGain.connect(tremolo.gain);
-  carrier.connect(filter);
-  filter.connect(tremolo);
-  tremolo.connect(enableGain);
-  enableGain.connect(ac.destination);
-
-  carrier.start();
-  lfo.start();
-
-  fallWarningNodes = {enableGain};
-}
-let fallWarningSoundOn = false;
-// conteo de "razones activas", MISMO patron que autoBulletTimeReasons en entities/bossengine.js:
-// antes esto era un booleano pelado, y updateFallWarning() (mas abajo) lo pisaba TODOS los
-// cuadros con setFallWarningSound(player.fallWarning) -- que para el jugador caminando por el
-// piso (no en caida libre) siempre es false. Eso apagaba en el mismo frame cualquier otro aviso
-// que prendiera este mismo zumbido por otro motivo (ej. el aviso de la bomba final del boss en
-// GROUNDED, entities/crazylimemonster.js) antes de que el jugador llegara a escucharlo. Con el
-// Set, cada motivo prende/apaga SU PROPIA razon por id, y el zumbido solo se apaga de verdad
-// cuando ya no queda ninguna razon activa.
-const fallWarningSoundReasons = new Set();
-function setFallWarningSound(reasonId, active){
-  if(active) fallWarningSoundReasons.add(reasonId);
-  else fallWarningSoundReasons.delete(reasonId);
-  const shouldPlay = fallWarningSoundReasons.size > 0;
-  if(shouldPlay === fallWarningSoundOn) return;
-  fallWarningSoundOn = shouldPlay;
-  const ac = getAudioCtx();
-  if(!fallWarningNodes) initFallWarningBuzz();
-  const g = fallWarningNodes.enableGain.gain;
-  const now = ac.currentTime;
-  g.cancelScheduledValues(now);
-  g.setValueAtTime(g.value, now);
-  g.linearRampToValueAtTime(shouldPlay ? 0.055 : 0, now + (shouldPlay ? 0.06 : 0.12));
-}
-
-// ---- "click" en vacio del lanzatelarañas cuando se quedo sin municion ----
-// un tap metalico bien corto y seco (no un pitido largo): un oscilador cuadrado agudo que
-// arranca y se apaga en menos de 40ms, sin deslizamiento de frecuencia ni sostenido -- la idea
-// es que se sienta como el gatillo trabando en vacio, no como un error o una alarma
-function playWebDryClick(){
-  const ac = getAudioCtx();
-  const now = ac.currentTime;
-
-  const osc = ac.createOscillator();
-  osc.type = 'square';
-  osc.frequency.setValueAtTime(900, now);
-
-  const gain = ac.createGain();
-  gain.gain.setValueAtTime(0.05, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
-
-  osc.connect(gain);
-  gain.connect(ac.destination);
-
-  osc.start(now);
-  osc.stop(now + 0.04);
-}
-
-// ---- golpe sordo grave al perder vida ----
-// un "thump" corto y suave, no un pitido: un oscilador senoidal grave (arranca ~110Hz y cae
-// rapido hacia ~45Hz, ese deslizamiento hacia abajo es lo que le da el caracter de "golpe" en
-// vez de sonar a nota musical) pasado por un filtro pasa-bajos bien cerrado para limarle
-// cualquier borde duro, con una envolvente de volumen de ataque instantaneo y decaimiento
-// rapido (nada de sostenido: pega y se apaga). Se crea un oscilador nuevo cada vez (a diferencia
-// del zumbido de caida, que queda corriendo siempre) porque esto es un pulso puntual, no algo
-// que se prende/apaga en el tiempo
-function playDamageThud(amount){
-  const ac = getAudioCtx();
-  const now = ac.currentTime;
-
-  // un golpe mas fuerte (mas daño) suena un poquito mas fuerte e insiste un poquito mas, sin
-  // dejar de ser grave y suave
-  const intensity = Math.min(1, amount / 30);
-  const peakGain = 0.10 + intensity*0.06;
-  const dur = 0.22 + intensity*0.08;
-
-  const osc = ac.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(110, now);
-  osc.frequency.exponentialRampToValueAtTime(42, now + dur);
-
-  const filter = ac.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.value = 220; // bien cerrado: nada de agudos, solo el cuerpo grave del golpe
-  filter.Q.value = 0.5;
-
-  const gain = ac.createGain();
-  gain.gain.setValueAtTime(0, now);
-  gain.gain.linearRampToValueAtTime(peakGain, now + 0.012); // ataque casi instantaneo
-  gain.gain.exponentialRampToValueAtTime(0.001, now + dur);  // decaimiento rapido, sin sostener
-
-  osc.connect(filter);
-  filter.connect(gain);
-  gain.connect(ac.destination);
-
-  osc.start(now);
-  osc.stop(now + dur + 0.02);
-}
+// ---------- SONIDO ----------
+// actx, getAudioCtx, initFallWarningBuzz, setFallWarningSound, playWebDryClick y playDamageThud
+// ahora viven en audio/sfx.js (ver audio/manifest.js) -- se cargan solas, llegan como
+// funciones/variables globales igual que antes
 
 // ---------- MUNDO ----------
 // WORLD_WIDTH, STREET_Y, CHUNK_WIDTH y CHUNKS_LOADED ahora viven en world/constants.js (ver
@@ -323,10 +197,11 @@ const VAULT_ARC_HEIGHT = 22;   // altura extra del arco del salto, para que se s
 // estructuras aparte de los edificios), nunca este HTML -- ver el comentario en
 // world/manifest.js para los pasos exactos.
 //
-// los carros YA NO viven dentro de los chunks (ver mas abajo, seccion TRAFICO): van y vienen
-// de forma continua, independiente de que chunk este cargado, asi que este array no se vacia
-// ni se reconstruye cuando cambian los chunks
-const cars = [];
+// los carros ahora viven en world/traffic.js (ver world/manifest.js): el array `cars`, sus
+// constantes CAR_*, spawnCar/trySpawnCars/despawnFarCars y el drawCars que los dibuja. Ya NO
+// viven dentro de los chunks (van y vienen de forma continua, independiente de que chunk este
+// cargado), asi que ese array no se vacia ni se reconstruye cuando cambian los chunks -- se
+// cargan solos, llegan como variables/funciones globales igual que antes.
 
 // se llama fn(impactSpeed, x, y) cada vez que ArachnoSwinger aterriza en el piso (calle) viniendo
 // de una caida (no al bajarse de un salto chiquito): impactSpeed es la velocidad vertical justo
@@ -364,71 +239,6 @@ window.RESET_LISTENERS = [];
 // cargamos los chunks iniciales antes de arrancar el juego
 updateChunks(150);
 
-// ---------- TRAFICO: carros continuos, sin rebotar en ningun limite ----------
-// cada carro, una vez aparece yendo en una direccion, sigue de largo por siempre en ESA misma
-// direccion (nunca se da vuelta ni rebota en el borde de un chunk ni de nada). Aparecen cerca
-// del jugador (justo afuera de camara, entrando en cuadro como si vinieran manejando desde mas
-// alla) y desaparecen solos cuando ya quedaron demasiado lejos de el
-const CAR_DESPAWN_DIST      = CHUNK_WIDTH * 2; // a 2 "chunks" de distancia del jugador, desaparecen
-const CAR_SPAWN_MARGIN      = 500;  // que tan lejos del borde de camara aparecen (para que "entren" en cuadro, no popeen de la nada)
-const CAR_SPAWN_INTERVAL_MIN = 1.1; // segundos entre apariciones nuevas
-const CAR_SPAWN_INTERVAL_MAX = 2.4;
-let carSpawnTimer = 0.6;
-
-// tres colores de bus, cada uno con su propia maña para manejar: los azules siempre van para la
-// derecha, los rojos siempre para la izquierda, y los amarillos van para cualquier lado pero de
-// vez en cuando (ver reversal de amarillos en update()) se arrepienten y se devuelven
-const CAR_COLORS = {
-  blue:   {body: '#3b6fd6', dir: 1},
-  red:    {body: '#d64545', dir: -1},
-  yellow: {body: '#e0c23c', dir: 0} // 0 = cualquiera de los dos, se decide al spawnear
-};
-const CAR_WHEEL_RADIUS = 64*0.2; // fijo (h siempre 64): asi la carroceria se puede levantar justo lo que hace falta
-
-function spawnCar(x, vx, color){
-  const w = 170, h = 64;
-  // la carroceria se sube un toque (el radio de la rueda) para que las ruedas queden apoyadas
-  // JUSTO en la calle en vez de enterradas en ella
-  cars.push({x, y: STREET_Y - h - CAR_WHEEL_RADIUS, w, h, vx, color, turnCooldown: color === 'yellow' ? 3 + Math.random()*4 : 0});
-}
-
-// aparece uno nuevo cada tanto, justo afuera de uno de los dos bordes de camara, manejando
-// hacia dentro de cuadro (para que se sienta que viene "de la calle", no que aparece de la nada)
-function trySpawnCars(dt){
-  carSpawnTimer -= dt;
-  if(carSpawnTimer > 0) return;
-  carSpawnTimer = CAR_SPAWN_INTERVAL_MIN + Math.random()*(CAR_SPAWN_INTERVAL_MAX - CAR_SPAWN_INTERVAL_MIN);
-
-  const colorNames = Object.keys(CAR_COLORS);
-  const color = colorNames[Math.floor(Math.random()*colorNames.length)];
-  const forcedDir = CAR_COLORS[color].dir;
-  const dir = forcedDir !== 0 ? forcedDir : (Math.random() < 0.5 ? -1 : 1);
-  const speed = dir * (60 + Math.random()*80);
-  const x = dir > 0
-    ? camera.x - CAR_SPAWN_MARGIN - 170   // viene desde la izquierda, manejando hacia la derecha
-    : camera.x + canvas.width + CAR_SPAWN_MARGIN; // viene desde la derecha, manejando hacia la izquierda
-  spawnCar(x, speed, color);
-}
-
-// se van solos (sin rebotar en nada) cuando quedan demasiado lejos del jugador
-function despawnFarCars(){
-  for(let i = cars.length-1; i>=0; i--){
-    if(Math.abs(cars[i].x - player.x) > CAR_DESPAWN_DIST) cars.splice(i,1);
-  }
-}
-
-// arranca la partida con algo de trafico ya circulando cerca del spawn, no con la calle vacia
-(function seedInitialTraffic(){
-  const colorNames = Object.keys(CAR_COLORS);
-  for(let i=0;i<8;i++){
-    const color = colorNames[Math.floor(Math.random()*colorNames.length)];
-    const forcedDir = CAR_COLORS[color].dir;
-    const dir = forcedDir !== 0 ? forcedDir : (Math.random()<0.5 ? -1 : 1);
-    const x = 150 + (Math.random()*1800 - 900); // 150 = x de spawn del jugador
-    spawnCar(x, dir*(60+Math.random()*80), color);
-  }
-})();
-
 // ---------- JUGADOR ----------
 // x,y = CENTRO del cuadrado
 const player = {
@@ -462,7 +272,7 @@ let gameOver = false;
 // congela update() por completo (ver el chequeo al principio de update() mas abajo), pero NO usa
 // gameOver para no disparar por accidente el reset de resetWorld() al des-pausar -- son dos
 // pantallas independientes, cada una con su propio overlay (ver pauseOverlay mas arriba y
-// drawGameOverScreen mas abajo)
+// drawGameOverScreen en render/hud.js)
 let paused = false;
 
 // resta vida al jugador (clampeada entre 0 y maxHp, y SIEMPRE en numeros enteros: nunca queda
@@ -488,143 +298,13 @@ function triggerGameOver(){
 }
 
 // ---------- SISTEMA MODULAR DE ENTIDADES ----------
-// Base generica para TODO lo que no sea el jugador ni un carro: civiles, villanos, bots,
-// dummies de practica, lo que sea. La idea es que el motor no necesite saber nada especifico
-// de cada uno: solo conoce "tipos" registrados (ENTITY_TYPES) con datos + un puñado de hooks
-// opcionales, e instancias vivas (`entities`) creadas a partir de esos tipos con spawnEntity().
-//
-// Por que esto importa para lo que viene (misiones activables, mas entidades, etc.):
-//  - un tipo se puede registrar desde ESTE archivo, pero tambien desde un <script> aparte, o
-//    cargando un JSON con fetch() (ver loadEntityTypesFromJSON mas abajo) — el motor no le
-//    pregunta nunca "de donde saliste", solo revisa ENTITY_TYPES[id].
-//  - una mision, a futuro, va a poder ser tan simple como: "registra estos tipos (si no estan
-//    ya) + spawnEntity(tipo, x, y) para cada uno de sus actores" (ver ejemplo de mision al final
-//    de esta seccion, MISSION_EXAMPLE, todavia no se dispara sola).
-//  - las telarañas ya saben engancharse a una entidad exactamente igual que a un carro (ver
-//    findEntityAt / computeWebHit / updateEntityRopePulls mas abajo): cualquier tipo nuevo que
-//    definas hereda ese comportamiento gratis, a menos que pongas webAttachable:false.
-//  - el combate (dealDamageAt, usado por puños/patadas Y por el hueco de proyectiles) ya revisa
-//    esta lista en vez de una lista aparte de "enemigos": un civil y un villano son lo mismo
-//    para el motor, la diferencia la pone cada tipo (def.friendly, def.invulnerable, etc.)
-const ENTITY_TYPES = {};
-
-// registra (o sobreescribe) un tipo de entidad. `def` solo necesita llenar lo que le importe:
-// todo lo demas queda con un default razonable.
-//   hp, hitRadius        -> vida y tamaño de la hitbox (circular)
-//   moveType             -> 'static' (no se mueve solo) | 'walker' (camina por el piso, gravedad)
-//                            | 'flyer' (vuela libre, sin gravedad) | 'custom' (moveType propio:
-//                            el motor no le toca ni x/y/vx/vy, todo lo mueve onUpdate)
-//   speed                -> velocidad de referencia que puede usar tu propio onUpdate/IA
-//   webAttachable         -> si una telaraña se puede pegar a esta entidad (como a un carro)
-//   pullMass              -> "peso" en la pulseada de una telaraña tensa (ver CAR_PULL_MASS);
-//                            mas alto = mas dificil de arrastrar/frenar con la soga
-//   friendly              -> civiles = true (a futuro, para que la IA/combate los trate distinto)
-//   invulnerable          -> si es true, dealDamageAt nunca le baja HP (util para dummies fijos,
-//                            civiles no combatientes, etc.)
-//   color                 -> color base para el dibujo generico (si no das draw custom)
-//   draw(ctx, entity)     -> dibujo 100% custom; si no lo das, se usa un monigote simple generico
-//   onSpawn(entity)       -> se llama una sola vez, justo al crearse
-//   onUpdate(entity, dt)  -> IA/logica propia: patrullar, perseguir, disparar proyectiles, etc.
-//   onDamage(entity,dmg,src) -> se llama cada vez que recibe daño (antes de aplicarlo al hp)
-//   onDeath(entity)       -> se llama una vez, justo cuando su hp llega a 0
-//   onWebProjectileHit(entity, dirX, dirY, speed) -> se llama una vez, el frame exacto en el que
-//                            un telarañazo SUELTO (webProjectiles, disparado a la nada o cortado
-//                            a mitad de viaje -- ver spawnWebProjectile/fireWeb) atraviesa la
-//                            hitbox de esta entidad; dirX/dirY/speed son los del telarañazo en ese
-//                            instante. El motor solo detecta el choque y llama esto -- que hacer
-//                            con el impacto (empujar, envolver, ignorar) es 100% cosa del tipo
-//                            (ver civiles.js, que envuelve al civil en telaraña con esto).
-//                            IMPORTANTE: tiene que devolver true si de verdad reacciono al
-//                            impacto -- solo ahi el motor da el telarañazo por consumido y lo
-//                            borra. Si devuelve false/undefined (por ej. un civil que ya esta
-//                            'hugging'/'carried'/'wrapped' y no debe reaccionar dos veces), el
-//                            motor trata a esta entidad como si no estuviera ahi y el proyectil
-//                            sigue de largo -- asi no "muere" contra alguien que ya cargabas
-//                            encima al tirar desde tu propio origen (ver civiles.js)
-//   projectile             -> config basica {speed,damage,radius,color,life} para que tu propio
-//                            onUpdate dispare con spawnEntityProjectile sin repetir numeros
-function registerEntityType(id, def){
-  ENTITY_TYPES[id] = Object.assign({
-    hp: 20,
-    hitRadius: 18,
-    moveType: 'static',
-    speed: 0,
-    webAttachable: true,
-    pullMass: 1.5,
-    friendly: false,
-    invulnerable: false,
-    color: '#9aa0ac',
-    // huggable -> si es true, un TOQUE de boton medio (ver performWebPull) con una telaraña
-    // tensada enganchada a esta entidad NO jala al jugador hacia ella (como con un edificio):
-    // es la entidad la que recibe el jalon, un impulso real de fisica hacia donde este el
-    // jugador en ese instante (ver applyEntityPullImpulse) -- despues cae bajo su propia
-    // gravedad/colisiones como cualquier cosa, puede no alcanzar, y la telaraña sigue enganchada
-    // para poder volver a tirar. El motor no decide cuando "atrapar" a la entidad: eso es cosa
-    // del propio onUpdate del tipo (ver el estado 'towed' en civiles.js), que la deja abrazarse
-    // sola en cuanto llegue lo bastante cerca del jugador
-    huggable: false,
-    draw: null,
-    onSpawn: null,
-    onUpdate: null,
-    onDamage: null,
-    onDeath: null,
-    onWebProjectileHit: null,
-    projectile: null
-  }, def);
-}
-
-// carga tipos de entidad desde un JSON externo (mismo formato que el segundo argumento de
-// registerEntityType, uno por clave). Pensado para el dia que las entidades vivan en archivos
-// aparte (entities/civiles.json, entities/villanos.json, etc.) en vez de este HTML. Los hooks
-// (onUpdate, draw, etc.) no viajan bien en JSON puro, asi que si el tipo los necesita, lo mejor
-// sigue siendo un .js aparte que llame a registerEntityType directamente (tambien soportado:
-// con un tag script src="entities/loquesea.js" (cerrado normal) antes de este script, siempre y cuando
-// llame a registerEntityType, ya queda disponible aca sin tocar nada mas).
-async function loadEntityTypesFromJSON(url){
-  try{
-    const res = await fetch(url);
-    const data = await res.json();
-    for(const id in data) registerEntityType(id, data[id]);
-  } catch(err){
-    console.warn('No se pudo cargar tipos de entidad desde', url, err);
-  }
-}
-
-// carga un .js suelto (uno que llame a registerEntityType por su cuenta) inyectando un <script>
-// nuevo en el <head>, y devuelve una promesa que se resuelve cuando termino de ejecutarse (asi
-// loadAllEntityFiles puede esperar a que cada uno registre sus tipos antes de seguir con el que
-// sigue, o antes de arrancar el juego)
-function loadEntityScript(src){
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = () => resolve(src);
-    s.onerror = () => { console.warn('No se pudo cargar el script de entidad', src); resolve(src); };
-    document.head.appendChild(s);
-  });
-}
-
-// ---------- ARCHIVOS DE ENTIDADES (civiles, villanos, lo que sea) ----------
-// El motor NO tiene rutas hardcodeadas aca: las lee de entities/manifest.js (ver <script>
-// entities/manifest.js en el <head> de este HTML, se carga ANTES que este script). Ese archivo
-// aparte es el UNICO que hace falta editar cuando haya entidades de verdad — nunca este HTML.
-// Si por algun motivo manifest.js no esta o no cargo, seguimos con listas vacias (no rompe nada,
-// simplemente no hay nada para cargar).
-const ENTITY_SCRIPT_FILES = (window.ENTITY_MANIFEST && window.ENTITY_MANIFEST.scripts) || [];
-const ENTITY_JSON_FILES   = (window.ENTITY_MANIFEST && window.ENTITY_MANIFEST.json)    || [];
-
-// recorre las dos listas de arriba y carga todo lo que encuentre, en orden, antes de devolver
-// la promesa (asi quien la llame puede hacer "await loadAllEntityFiles()" y recien despues
-// arrancar a spawnear cosas, con la garantia de que todos los tipos ya estan registrados). Se
-// llama sola al arrancar el juego (ver el final de este archivo) — mientras manifest.js este
-// vacio, esto no hace absolutamente nada, asi que es seguro dejarla siempre activa.
-async function loadAllEntityFiles(){
-  // las rutas en manifest.js son relativas a la carpeta entities/ (para que ese archivo se
-  // pueda escribir sin repetir "entities/" en cada linea) — aca es donde se le agrega el prefijo
-  // real antes de pedirlas
-  for(const src of ENTITY_SCRIPT_FILES) await loadEntityScript('entities/' + src);
-  for(const url of ENTITY_JSON_FILES) await loadEntityTypesFromJSON('entities/' + url);
-}
+// El motor generico (ENTITY_TYPES, registerEntityType, loadEntityTypesFromJSON,
+// loadEntityScript, ENTITY_SCRIPT_FILES/ENTITY_JSON_FILES, loadAllEntityFiles, entities,
+// spawnEntity, updateEntities, drawEntities, entityProjectiles y compania) se movio a
+// entities/engine.js, cargado desde el <head> justo despues de entities/manifest.js (ver esos
+// dos <script> arriba y el comentario de orden de carga al principio de entities/engine.js).
+// Todo eso queda disponible aca abajo como si siguiera siendo local a este archivo -- no hace
+// falta importar nada ni tocar este script para usarlo.
 
 // ---------- ARCHIVOS DE HABILIDADES (las que se disparan con botones/teclas) ----------
 // mismo patron que arriba: el motor NO tiene rutas hardcodeadas, las lee de
@@ -695,6 +375,105 @@ function applyStoredSettingsToControls(){
   if(typeof s.amazing === 'boolean') window.CONTROLS.webType = s.amazing ? 'Andrew' : 'Tobey';
 }
 
+// ---- skin del jugador, pintada desde el menu (ver el boton 🎨 de index.html) ----
+// index.html guarda ahi el color base + el dibujo a pincel de cada segmento (cabeza, torso,
+// brazos, piernas), SIEMPRE en localStorage (tambien en skins/playerSkin.json si hay NW.js,
+// pero index.html escribe en localStorage igual en cualquier caso, asi que con leer esta clave
+// alcanza aca, mismo patron que ARACHNOSWINGER_SETTINGS_KEY arriba). Si no hay nada guardado
+// (o algun segmento no fue tocado), playerSkin queda null / sin ese segmento, y drawPlayer (ver
+// render/player.js) sigue mostrando el trazo liso de siempre para el -- este sistema es 100%
+// aditivo, no rompe nada para quien nunca abrio el editor.
+const ARACHNOSWINGER_SKIN_KEY = 'arachnoswinger:skin';
+const SKIN_CANVAS_SIZE = 320; // tiene que coincidir con el mismo valor de index.html
+const SKIN_SEGMENTS = { // key -> forma, mismas siluetas que ofrece el editor del menu
+  head:      'circle',
+  torso:     'capsule',
+  armLeft:   'capsule',
+  armRight:  'capsule',
+  legLeft:   'capsule',
+  legRight:  'capsule'
+};
+
+// misma silueta que arma buildSegmentPath en index.html (capsula HORIZONTAL, largo en X;
+// circulo para la cabeza) -- se usa para recortar la mezcla de color base + dibujo a pincel de
+// cada segmento antes de guardarla como sprite listo para estampar
+function buildSkinShapePath(sctx, shape){
+  const c = SKIN_CANVAS_SIZE;
+  sctx.beginPath();
+  if(shape === 'circle'){
+    sctx.arc(c/2, c/2, c*0.34, 0, Math.PI*2);
+  } else {
+    const h = c*0.32, w = c*0.82, r = h/2;
+    const x = c/2 - w/2, y = c/2 - h/2;
+    sctx.moveTo(x+r, y);
+    sctx.lineTo(x+w-r, y);
+    sctx.arc(x+w-r, y+r, r, -Math.PI/2, Math.PI/2);
+    sctx.lineTo(x+r, y+h);
+    sctx.arc(x+r, y+r, r, Math.PI/2, Math.PI*1.5);
+    sctx.closePath();
+  }
+}
+
+// player.skin: key -> {sprite} donde sprite es un <canvas> SKIN_CANVAS_SIZE x SKIN_CANVAS_SIZE
+// ya compuesto (color base + dibujo a pincel, recortado a la silueta), listo para que
+// stampSkinLimb/stampSkinHead (ver player.js) lo escale y rote sobre la posicion real del
+// segmento en cada frame. Si un segmento no tiene sprite todavia (recien esta cargando la
+// imagen, o no se guardo nada para el), simplemente no se estampa nada extra ese frame.
+let playerSkin = null;
+
+function loadPlayerSkin(){
+  let raw;
+  try{ raw = localStorage.getItem(ARACHNOSWINGER_SKIN_KEY); }
+  catch(err){ console.warn('No se pudo leer la skin guardada', err); return; }
+  if(!raw) return;
+
+  let data;
+  try{ data = JSON.parse(raw); }
+  catch(err){ console.warn('Skin guardada invalida, se ignora', err); return; }
+
+  // switch "¿mostrar la skin puesta?" del editor (index.html): si esta en NO, ni siquiera
+  // armamos los sprites -- playerSkin se queda null y drawPlayer dibuja al prota liso de
+  // siempre, sin tocar nada de lo pintado (sigue guardado, solo no se aplica)
+  if(data.enabled === false) return;
+
+  playerSkin = {};
+  for(const key of Object.keys(SKIN_SEGMENTS)){
+    if(data[key]) composePlayerSkinSprite(key, data[key]);
+  }
+}
+
+// arma (async por la carga de la imagen del dibujo) el canvas final de un segmento: rellena la
+// silueta con el color base y encima pega el dibujo a pincel guardado, todo recortado a esa
+// misma silueta -- igual que ya se ve en vivo en el editor del menu
+function composePlayerSkinSprite(key, seg){
+  const shape = SKIN_SEGMENTS[key];
+  const finish = (drawingImg) => {
+    const sprite = document.createElement('canvas');
+    sprite.width = SKIN_CANVAS_SIZE; sprite.height = SKIN_CANVAS_SIZE;
+    const sctx = sprite.getContext('2d');
+    sctx.save();
+    buildSkinShapePath(sctx, shape);
+    sctx.clip();
+    if(seg.color){
+      sctx.fillStyle = seg.color;
+      sctx.fillRect(0, 0, SKIN_CANVAS_SIZE, SKIN_CANVAS_SIZE);
+    }
+    if(drawingImg) sctx.drawImage(drawingImg, 0, 0);
+    sctx.restore();
+    playerSkin[key] = {sprite};
+  };
+  if(seg.drawing){
+    const img = new Image();
+    img.onload = () => finish(img);
+    img.onerror = () => finish(null);
+    img.src = seg.drawing;
+  } else {
+    finish(null);
+  }
+}
+
+loadPlayerSkin();
+
 // recorre las dos listas del manifest de habilidades y carga todo, en orden (reutiliza
 // loadEntityScript de arriba, que no tiene nada de especifico a entidades: solo inyecta un
 // <script src> y espera a que termine)
@@ -706,255 +485,17 @@ async function loadAllAbilityFiles(){
   applyStoredSettingsToControls();
 }
 
-const entities = []; // instancias vivas: civiles, villanos, dummies, lo que sea
-let entityIdCounter = 1;
+// entities[], entityIdCounter, spawnEntity, updateEntities, drawEntities y los proyectiles
+// genericos de entidad (entityProjectiles, spawnEntityProjectile, updateEntityProjectiles,
+// drawEntityProjectiles) tambien se movieron a entities/engine.js junto con el resto del motor
+// -- quedan disponibles aca igual, sin nada que importar.
 
-// crea una instancia de un tipo ya registrado. opts puede pisar cualquier campo de la instancia
-// (por ejemplo spawnEntity('civil', x, y, {facing:-1, patrolMinX:x-200, patrolMaxX:x+200}) para
-// darle a esta instancia puntual datos que solo ella necesita, sin tocar el tipo en general)
-function spawnEntity(typeId, x, y, opts={}){
-  const def = ENTITY_TYPES[typeId];
-  if(!def){ console.warn('Tipo de entidad no registrado:', typeId); return null; }
-  const e = Object.assign({
-    id: entityIdCounter++,
-    type: typeId,
-    def,
-    x, y, vx: 0, vy: 0,
-    hp: def.hp, maxHp: def.hp,
-    hitRadius: def.hitRadius,
-    grounded: false,
-    facing: 1,
-    dead: false,
-    state: 'idle',
-    t: 0
-  }, opts);
-  entities.push(e);
-  if(def.onSpawn) def.onSpawn(e);
-  return e;
-}
-
-// avanza fisica/IA basica de cada entidad y limpia las que murieron. La fisica que da el motor
-// es a proposito minima (gravedad simple + piso al nivel de la calle para 'walker'): cualquier
-// cosa mas especifica (patrullar, perseguir, esquivar, volar en patron, etc.) es responsabilidad
-// del onUpdate de cada tipo, que corre SIEMPRE, sin importar el moveType.
-function updateEntities(dt){
-  for(let i = entities.length-1; i >= 0; i--){
-    const e = entities[i];
-    if(e.dead){ entities.splice(i,1); continue; }
-
-    // reel-in generico: viaja en linea recta hacia el jugador a WEB_PULL_SPEED, ignorando su
-    // moveType normal (gravedad, patrullaje, etc.) mientras dure el viaje -- lo usan entidades
-    // con def.reelBehavior propio (ej. una bomba enganchada, ver performWebPull) que decidan
-    // prender e.beingReeled por su cuenta. Las entidades "huggable" (civiles, etc.) YA NO pasan
-    // por aca: a esas el jalon de boton medio les da un impulso de fisica real en vez de
-    // teletransportarlas en linea recta (ver applyEntityPullImpulse/performWebPull), asi que se
-    // manejan con su fisica normal de mas abajo, no con este branch.
-    if(e.beingReeled){
-      const dx = player.x - e.x, dy = player.y - e.y;
-      const dist = Math.hypot(dx,dy) || 0.0001;
-      const step = WEB_PULL_SPEED*dt;
-      if(step >= dist){
-        e.x = player.x; e.y = player.y;
-        e.vx = 0; e.vy = 0;
-        e.beingReeled = false;
-        e.justCaught = true; // senial de un solo frame: "recien llegue", que la lea el propio onUpdate
-      } else {
-        e.x += dx/dist*step; e.y += dy/dist*step;
-        e.vx = dx/dist*WEB_PULL_SPEED; e.vy = dy/dist*WEB_PULL_SPEED;
-      }
-    } else if(!e.carried){
-      if(e.def.moveType === 'walker'){
-        e.vy += GRAVITY*dt;
-        e.y += e.vy*dt;
-        if(e.y >= STREET_Y - e.hitRadius){ e.y = STREET_Y - e.hitRadius; e.vy = 0; e.grounded = true; }
-        else e.grounded = false;
-        e.x += e.vx*dt;
-      } else if(e.def.moveType === 'flyer'){
-        e.x += e.vx*dt;
-        e.y += e.vy*dt;
-      }
-      // 'static' y 'custom' no reciben ningun movimiento automatico del motor
-    }
-
-    if(e.def.onUpdate) e.def.onUpdate(e, dt);
-    e.justCaught = false; // dura un solo frame, la lea o no el onUpdate
-
-    if(e.hp <= 0 && !e.dead){
-      e.dead = true;
-      if(e.def.onDeath) e.def.onDeath(e);
-    }
-  }
-}
-
-// dibujo generico (si el tipo no trae uno propio): un monigote simple, sin animacion, mas una
-// barrita de vida arriba (solo si esta danada, para no ensuciar la pantalla con entidades sanas)
-function drawEntities(ctx){
-  for(const e of entities){
-    if(e.def.draw){ e.def.draw(ctx, e); }
-    else {
-      ctx.fillStyle = e.def.color;
-      ctx.beginPath();
-      ctx.arc(e.x, e.y - e.hitRadius*0.3, e.hitRadius*0.55, 0, Math.PI*2); // "cabeza"
-      ctx.fill();
-      ctx.fillRect(e.x - e.hitRadius*0.35, e.y - e.hitRadius*0.1, e.hitRadius*0.7, e.hitRadius*1.1); // "cuerpo"
-    }
-    if(e.hp < e.maxHp){
-      const w = e.hitRadius*2, h = 5;
-      const bx = e.x - w/2, by = e.y - e.hitRadius - 14;
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(bx-1, by-1, w+2, h+2);
-      ctx.fillStyle = '#c0392b';
-      ctx.fillRect(bx, by, w, h);
-      ctx.fillStyle = '#2ecc71';
-      ctx.fillRect(bx, by, w*Math.max(0,e.hp/e.maxHp), h);
-    }
-  }
-}
-
-// ---------- PROYECTILES DE ENTIDADES ----------
-// generico y separado de webProjectiles (esos son puramente esteticos/de telaraña): estos
-// SI dañan al jugador al tocarlo. Cualquier tipo de entidad puede usarlos desde su onUpdate,
-// por ejemplo: if(e.t > e.def.projectile.cooldown){ spawnEntityProjectile(e.x,e.y,dirX,dirY,e.def.projectile); e.t=0; }
-const entityProjectiles = [];
-function spawnEntityProjectile(x, y, dirX, dirY, cfg={}){
-  entityProjectiles.push({
-    x, y, dirX, dirY,
-    speed: cfg.speed ?? 500,
-    damage: cfg.damage ?? 5,
-    radius: cfg.radius ?? 8,
-    color: cfg.color ?? '#e67e22',
-    life: 0,
-    maxLife: cfg.life ?? 4
-  });
-}
-function updateEntityProjectiles(dt){
-  const half = PLAYER_SIZE/2;
-  for(let i = entityProjectiles.length-1; i >= 0; i--){
-    const p = entityProjectiles[i];
-    p.x += p.dirX*p.speed*dt;
-    p.y += p.dirY*p.speed*dt;
-    p.life += dt;
-
-    const hitPlayer = Math.hypot(p.x-player.x, p.y-player.y) <= p.radius + half;
-    let remove = p.life >= p.maxLife;
-    if(hitPlayer){ damagePlayer(p.damage); remove = true; }
-
-    if(remove) entityProjectiles.splice(i,1);
-  }
-}
-function drawEntityProjectiles(ctx){
-  for(const p of entityProjectiles){
-    ctx.fillStyle = p.color;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2); ctx.fill();
-  }
-}
-
-// ---------- TIPOS/INSTANCIAS DE ENTIDAD ----------
-// Aca no hay nada spawneado a proposito: el sistema (registerEntityType, spawnEntity,
-// loadEntityTypesFromJSON) queda listo y funcionando, pero sin ningun civil/villano de prueba
-// dando vueltas. Cuando haya misiones o entidades de verdad, se registran sus tipos (desde un
-// <script> aparte, o con loadEntityTypesFromJSON) y se llama a spawnEntity(tipo, x, y) donde
-// corresponda — el motor no necesita ningun otro cambio para tomarlas.
-
-// ---------- COMBATE CUERPO A CUERPO (boton medio del mouse + click): puños y patadas ----------
-// cada golpe genera, por un instante nada mas, una hitbox circular que revisa `entities` (ver
-// sistema modular arriba) y le aplica daño y empuje si corresponde. Mientras tanto, lo que SI
-// se nota ya mismo es el impulso que el propio golpe le da al jugador (como un culatazo de
-// retroceso al conectar), aun sin ningun enemigo cerca.
-
-const PUNCH_DURATION = 0.18; // duracion total de la animacion del puñetazo
-const PUNCH_ACTIVE_T = 0.08; // instante (dentro de esa duracion) en que la hitbox esta activa
-const PUNCH_REACH    = 40;   // que tan lejos del cuerpo aparece la hitbox
-const PUNCH_RADIUS   = 16;
-const PUNCH_DAMAGE   = 8;
-const PUNCH_IMPULSE  = 200;  // empuje chico: mas que nada la sensacion de haber pegado
-const PUNCH_CONE     = Math.PI/5; // (36°) cuanto se puede desviar el puño de tu frente hacia la mira
-
-const KICK_DURATION       = 0.26;
-const KICK_ACTIVE_T       = 0.12;
-const KICK_REACH          = 50;
-const KICK_RADIUS         = 19;
-const KICK_DAMAGE         = 14;
-const KICK_IMPULSE_GROUND = 340; // patada parado: empuje notablemente mayor que el puñetazo
-const KICK_IMPULSE_AIR    = 400; // patada en el aire: un poco mas fuerte todavia (nada exagerado)
-const KICK_CONE_GROUND    = Math.PI/5; // parado, la patada tambien va bastante de frente
-
-// aplica el impulso de un golpe: empuja en la direccion del golpe, PERO nunca hacia arriba
-// (dirY negativo = arriba en pantalla). Asi los golpes no sirven para volar a puro combo:
-// si pegas hacia abajo o al costado, empuja normal; si el golpe apunta para arriba, esa parte
-// del empuje simplemente no se aplica
-function applyAttackImpulse(dirX, dirY, impulse){
-  player.vx += dirX*impulse;
-  if(dirY > 0) player.vy += dirY*impulse;
-}
-
-// aplica daño + empuje a cualquier entidad (civil, villano, dummy, lo que sea) dentro del radio
-// de la hitbox. Las que su tipo marco como invulnerable (def.invulnerable) sienten el empujon
-// igual, pero nunca pierden vida (util para dummies fijos o civiles que no deberian "morir")
-function dealDamageAt(x, y, radius, damage, knockbackX, knockbackY){
-  for(const en of entities){
-    if(en.dead) continue;
-    const d = Math.hypot(en.x - x, en.y - y);
-    if(d <= radius + (en.hitRadius || 20)){
-      en.vx = (en.vx||0) + knockbackX;
-      en.vy = (en.vy||0) + knockbackY;
-      if(!en.def.invulnerable){
-        if(en.def.onDamage) en.def.onDamage(en, damage, {x,y});
-        en.hp = (en.hp||0) - damage;
-      }
-    }
-  }
-}
-
-// version "capsula" de dealDamageAt, pensada para los puños/patadas (ver updateAttack): en vez
-// de una unica hitbox circular flotando a `reach` de distancia del jugador (que deja un hueco
-// MUERTO entre el cuerpo del jugador y ese circulo -- nada mas cerca que reach-radius puede
-// recibir el golpe), esta cubre TODO el tramo desde el jugador hasta ese punto. Sin esto, algo
-// que estas jalando hacia vos con la telaraña (ver applyEntityPullImpulse/performWebPull) pasa
-// buena parte del vuelo mas cerca que ese hueco muerto, y un golpe en pleno aire simplemente lo
-// atraviesa sin conectar -- ni knockback ni daño -- porque su hitbox real quedaba mas lejos que
-// el blanco. Mismo criterio de impacto que dealDamageAt (circulo contra circulo), solo que el
-// punto de comparacion es el mas cercano sobre el segmento jugador -> jugador+dir*reach, no un
-// punto fijo
-function dealDamageAlongReach(originX, originY, dirX, dirY, reach, radius, damage, knockbackX, knockbackY){
-  for(const en of entities){
-    if(en.dead) continue;
-    const px = en.x - originX, py = en.y - originY;
-    const t = Math.max(0, Math.min(reach, px*dirX + py*dirY)); // proyeccion clampeada a [0, reach]
-    const cx = originX + dirX*t, cy = originY + dirY*t;
-    const d = Math.hypot(en.x - cx, en.y - cy);
-    if(d <= radius + (en.hitRadius || 20)){
-      en.vx = (en.vx||0) + knockbackX;
-      en.vy = (en.vy||0) + knockbackY;
-      if(!en.def.invulnerable){
-        if(en.def.onDamage) en.def.onDamage(en, damage, {x:cx, y:cy});
-        en.hp = (en.hp||0) - damage;
-      }
-    }
-  }
-}
-
-// arranca un puñetazo o una patada apuntando hacia el mouse: el puñetazo y la patada parada
-// van sobre todo al frente (solo se desvian un poco hacia la mira, dentro de un cono angosto),
-// mientras que la patada en el aire va de lleno hacia donde apuntes, sin ceñirse al frente
-// devuelve true si el golpe realmente arranco, false si no (clingeado, volteretiando, o
-// controlState especial) -- el mousedown usa este valor para saber si el click "se gasto" en
-// un puñetazo/patada o si, al no poder pegar, debe caer a lanzar telaraña como un click normal
-// startAttack(type) (el disparo del golpe) ahora vive en habilities/attack.js -- se carga solo,
-// llega como funcion global igual que antes de moverla, no hace falta tocar nada mas aca
-
-// avanza la animacion del golpe en curso y dispara la hitbox una sola vez, justo en el
-// instante "activo" de la animacion (no en todo momento, como un golpe de verdad)
-function updateAttack(dt){
-  const a = player.attacking;
-  if(!a) return;
-  a.t += dt;
-  if(!a.hit && a.t >= a.activeAt){
-    a.hit = true;
-    dealDamageAlongReach(player.x, player.y, a.dirX, a.dirY, a.reach, a.radius, a.damage, a.dirX*260, a.dirY*260);
-  }
-  if(a.t >= a.dur) player.attacking = null;
-}
+// el sistema de combate cuerpo a cuerpo (constantes PUNCH_*/KICK_*, applyAttackImpulse,
+// updateAttack y startAttack) se movio entero a habilities/attack.js -- se carga solo (ver
+// loadAllAbilityFiles, esperado antes de arrancar el loop principal) y llega como funciones/
+// constantes globales igual que antes de moverlo, no hace falta tocar nada mas aca. updateAttack
+// se sigue llamando una vez por frame desde el loop de update() de este archivo, como cualquier
+// otro sistema.
 
 
 // ---------- TELARAÑAS: una por mano, cada una es independiente ----------
@@ -1046,6 +587,7 @@ function resetPlayer(){
   player.x = 150; player.y = STREET_Y - PLAYER_SIZE/2;
   player.vx = 0; player.vy = 0;
   player.grounded = true; player.standingOnCar = null; player.running = false;
+  player.standingOnElevator = null; player.insideElevatorShaft = false;
   player.rolling = false; player.rollTimer = 0;
   player.rotation = 0; player.angularVelocity = 0;
   player.clinging = null;
@@ -1090,6 +632,9 @@ function resetWorld(){
   window.AUTO_BULLET_TIME = false;
   spiderSenseOn = false;
   timeScale = 1;
+  // entrar a los edificios (ver world/interiors.js): el edificio en el que estabas quizas ni se
+  // regenere igual, asi que un reinicio completo te saca de adentro sin ceremonias
+  window.insideBuilding = null;
 
   for(const fn of window.RESET_LISTENERS) fn();
 
@@ -1227,6 +772,9 @@ window.addEventListener('keydown', e=>{
       // ahi agarrarte de una pared tiene que funcionar igual que si no tuvieras nada enganchado.
       // Parado o caminando con una telaraña enganchada por ahi (una soga floja, no te sostiene)
       // tampoco cuenta como columpio, asi que ahi agarrarte de una pared tiene que funcionar sin lios.
+      // (un solo toque de W o S, sin nada que ver con este doble-toque, tambien controla el
+      // ascensor de un interior -- ver world/interiors.js, que escucha estas mismas teclas con su
+      // propio keydown listener aparte, sin pisar nada de lo que pasa aca)
       if(!e.repeat){
         const doubleTapped = performance.now() - lastTapTime.w < DOUBLE_TAP_WINDOW_MS;
         lastTapTime.w = performance.now();
@@ -1236,7 +784,9 @@ window.addEventListener('keydown', e=>{
         }
       }
       keys.w = true; break;
-    case 'KeyS': regainControlIfPassive(); keys.s = true; break;
+    case 'KeyS':
+      regainControlIfPassive();
+      keys.s = true; break;
     case 'Space':
       if(!e.repeat){ spaceJustPressed = true; regainControlIfPassive(); }
       e.preventDefault(); break;
@@ -1301,6 +851,15 @@ canvas.addEventListener('mousemove', e=>{
 });
 
 function findBuildingAt(worldX, worldY){
+  // adentro de un edificio (ver world/interiors.js): `buildings` sigue siendo el de la ciudad de
+  // afuera (nada de eso esta cerca del bolsillo de coordenadas en el que vive el jugador aca
+  // adentro), asi que la mira/telaraña chequean contra ib.facade -- el rectangulo entero del
+  // cuarto, jugando el mismo papel que una fachada de verdad afuera
+  if(window.insideBuilding){
+    const f = window.insideBuilding.facade;
+    if(worldX >= f.x && worldX <= f.x+f.w && worldY >= f.y && worldY <= f.y+f.h) return f;
+    return null;
+  }
   for(const b of buildings){
     if(worldX >= b.x && worldX <= b.x+b.w && worldY >= b.y && worldY <= b.y+b.h) return b;
   }
@@ -1579,8 +1138,16 @@ function update(dt){
   // resetWorld() -- solo vuelve a correr cuando se despausa
   if(paused) return;
 
-  // ciudad infinita por chunks: cargamos/descargamos segun donde este el jugador
-  updateChunks(player.x);
+  // ciudad infinita por chunks: cargamos/descargamos segun donde este el jugador -- si estamos
+  // metidos en un edificio, player.x/y ya NO son una posicion de calle (son su posicion REAL
+  // adentro del bolsillo de la habitacion, ver world/interiors.js), asi que seguimos anclados a
+  // la puerta de afuera por la que entramos en vez de a esa posicion
+  updateChunks(window.insideBuilding ? window.insideBuilding.doorX : player.x);
+
+  // ascensor del interior (ver world/interiors.js): se actualiza temprano, mismo momento que el
+  // trafico de mas abajo, para que collideRoom (mas adelante en este mismo frame) ya vea la
+  // posicion de la cabina puesta al dia
+  if(window.insideBuilding) updateElevator(dt);
 
   // mover carros: ya no rebotan en ningun limite, siguen de largo en la misma direccion con la
   // que aparecieron. El trafico se repone solo (aparecen cerca, desaparecen lejos)
@@ -1604,6 +1171,14 @@ function update(dt){
   updateEntityProjectiles(dt);
 
   for(const fn of window.WORLD_UPDATE_LISTENERS) fn(dt);
+
+  // entrar a los edificios (ver world/interiors.js): a diferencia de antes, YA NO cortamos aca.
+  // El jugador (mismo objeto, misma fisica) sigue de largo por exactamente el mismo pipeline de
+  // abajo (piso/aire/salto/colisiones) este el adentro o afuera de un edificio -- lo unico que
+  // cambia es contra que resuelve collideWorld (ver el enganche en physics/movement.js, que
+  // delega a collideRoom cuando window.insideBuilding esta puesto, en vez de contra la
+  // calle/carros/techos de la ciudad). El mundo de afuera (chunks/carros/entidades) YA se
+  // actualizo arriba y sigue corriendo con normalidad mientras tanto, este el jugador donde este.
 
   // si estaba parado sobre un carro, moverse con el
   if(player.grounded && player.standingOnCar){
@@ -1633,7 +1208,7 @@ function update(dt){
   } else if(player.clinging){
     updateWallCling(dt, allowInput);
     const c = player.clinging;
-    if(allowInput && spaceJustPressed && c && c.atTop){
+    if(allowInput && spaceJustPressed && c && c.atTop && !c.indoor){
       // llego a lo mas alto escalando: SPACE dispara el salto-voltereta que lo deja parado
       // arriba, en el techo del edificio (en vez de quedar trabado bajo el borde del techo)
       const b = c.building;
@@ -1649,7 +1224,7 @@ function update(dt){
       player.clinging = null;
       player.grounded = false;
       player.vx = 0; player.vy = 0;
-    } else if(allowInput && spaceJustPressed && c && c.atEdge){
+    } else if(allowInput && spaceJustPressed && c && c.atEdge && !c.indoor){
       // saltar (SPACE) desde el borde lateral del edificio: te libera hacia otro edificio
       const side = c.edgeSide;
       player.vx = side === 'left' ? -WALL_JUMP_VX : WALL_JUMP_VX;
@@ -1658,7 +1233,9 @@ function update(dt){
       player.grounded = false;
     } else if(allowInput && spaceJustPressed && c){
       // en cualquier otra zona de la fachada no hay de donde saltar: SPACE simplemente te
-      // suelta del agarre (sin impulso extra) y a partir de ahi caes en caida libre normal
+      // suelta del agarre (sin impulso extra) y a partir de ahi caes en caida libre normal.
+      // Adentro de un edificio (c.indoor) SIEMPRE cae aca: no hay techo del que vaultear ni
+      // edificio vecino al que saltar, asi que da igual en que punto de la pared estes
       player.clinging = null;
       player.grounded = false;
     }
@@ -1690,8 +1267,15 @@ function update(dt){
 
   // aviso de "te estas por estampar": se calcula ANTES de resolver el impacto de este frame
   // (collideWorld), con la posicion/velocidad ya definitivas del frame -- asi predice sobre
-  // el estado real, no sobre uno que collideWorld esta a punto de pisar
-  updateFallWarning();
+  // el estado real, no sobre uno que collideWorld esta a punto de pisar. distanceToSurfaceBelow
+  // mira calle/carros/plataformas de la CIUDAD, asi que no tiene sentido adentro de una
+  // habitacion (donde ademas nunca hay caida real posible: el techo es bajo) -- lo saltamos
+  if(window.insideBuilding){
+    player.fallWarning = false;
+    setFallWarningSound('fall', false);
+  } else {
+    updateFallWarning();
+  }
 
   if(!player.vaulting && controlState !== 'dragging'){
     const prevVy = player.vy; // velocidad vertical justo antes de resolver el impacto contra el piso
@@ -1739,21 +1323,32 @@ function update(dt){
 
   spaceJustPressed = false;
 
-  // la ciudad ya no tiene ningun limite horizontal: es infinita para los dos lados
+  // adentro de un edificio la camara YA NO tiene su propio encuadre fijo (ver world/interiors.js,
+  // drawRoomWorld): te sigue exactamente con el mismo criterio de siempre, mostrado en el bloque
+  // de abajo -- lo unico que cambia adentro es el clamp vertical (limites del cuarto en vez de la
+  // altura de los edificios cargados de la ciudad), y que no hay reseteo por caerse del mapa
+  // (adentro no hay "vacio" al que caer)
+  if(player.y > canvas.height + 600 && !window.insideBuilding) resetPlayer();
 
-  if(player.y > canvas.height + 600) resetPlayer();
-
-  // camara (tampoco tiene limite horizontal, sigue al jugador para donde sea que vaya)
+  // camara (sin limite horizontal, sigue al jugador para donde sea que vaya, adentro o afuera)
   camera.x = player.x - canvas.width/2;
 
   let camY = player.y - canvas.height*0.6;
-  camY = Math.min(camY, 0);
-  // el limite de cuanto puede subir la camara ya no es fijo: se ajusta segun el edificio
-  // mas alto que este cargado en este momento, para que los edificios altos siempre entren
-  let minCamY = -1000;
-  for(const b of buildings){ if(b.y < minCamY) minCamY = b.y; }
-  minCamY -= 400; // margen para que se vea el techo completo, no justo al ras
-  camY = Math.max(camY, minCamY);
+  if(window.insideBuilding){
+    // clamp a los limites reales del cuarto (en coordenadas de mundo, roomX0 + local): nunca
+    // muestra mas alla del techo ni mas abajo del piso, con un margen chico para que no quede
+    // pegada al borde justo
+    const ib = window.insideBuilding;
+    camY = Math.max(-200, Math.min(camY, ib.roomH - canvas.height + 200));
+  } else {
+    camY = Math.min(camY, 0);
+    // el limite de cuanto puede subir la camara ya no es fijo: se ajusta segun el edificio
+    // mas alto que este cargado en este momento, para que los edificios altos siempre entren
+    let minCamY = -1000;
+    for(const b of buildings){ if(b.y < minCamY) minCamY = b.y; }
+    minCamY -= 400; // margen para que se vea el techo completo, no justo al ras
+    camY = Math.max(camY, minCamY);
+  }
 
   // temblorcito de camara si veniamos de recibir un golpe (ver triggerCameraShake, disparado
   // desde damagePlayer); se suma DESPUES de los clamps de arriba, es solo un offset visual
@@ -2172,502 +1767,163 @@ function webHandTarget(hand){
   return null; // 'detached': ya no esta conectada a la mano
 }
 
-// dibuja al monigote rojo, ya rotado y con la pose segun el estado (caminando/colgado/en el aire)
-function drawPlayer(ctx){
-  const walking = player.grounded && Math.abs(player.vx) > 15;
-  const bracing = controlState === 'dragging'; // DETENIENDO: clavando los pies, nada que ver con caminar -- por eso se chequea ANTES que "walking" mas abajo, para ganarle
-  const clinging = !!player.clinging;
-  const leftTarget = webHandTarget('left');
-  const rightTarget = webHandTarget('right');
-  const swinging = !clinging && (leftTarget || rightTarget);
-
-  ctx.save();
-  ctx.translate(player.x, player.y);
-  ctx.rotate(player.rotation);
-  ctx.strokeStyle = '#8f0d0d';
-  ctx.fillStyle = '#c0392b';
-  ctx.lineWidth = 3;
-  ctx.lineCap = 'round';
-
-  const hip = {x:0, y:4};
-  let leftFoot, rightFoot;
-  if(clinging){
-    if(player.clinging.atEdge){
-      // en el borde: una mano y un pie bien agarrados de la esquina del edificio (hacia adentro),
-      // el resto suelto colgando hacia afuera
-      const s = player.clinging.edgeSide === 'left' ? 1 : -1;
-      leftFoot  = {x: s*11, y: 12};
-      rightFoot = {x: -s*4, y: 17};
-    } else {
-      // escalando en medio de la fachada: pies alternandose como en una trepada de verdad
-      const cyc = player.climbCycle;
-      leftFoot  = {x:-7, y: 13 + Math.sin(cyc)*3};
-      rightFoot = {x: 7, y: 13 + Math.sin(cyc+Math.PI)*3};
-    }
-  } else if(player.attacking && player.attacking.type === 'kick'){
-    // patada: la pierna derecha se estira hacia la direccion del golpe (adentro-afuera, como
-    // un latigazo), mientras la izquierda queda de apoyo
-    const atk = player.attacking;
-    const phase = Math.min(1, atk.t/atk.dur);
-    const extend = Math.sin(phase*Math.PI); // 0 -> 1 -> 0 a lo largo de toda la animacion
-    const kp = localHandPoint(player.x+atk.dirX, player.y+atk.dirY, 9 + extend*11);
-    rightFoot = {x: kp.x, y: kp.y};
-    leftFoot  = {x: -4, y: 15};
-  } else if(bracing){
-    // DETENIENDO: piernas tensas, bien plantadas y corridas hacia ATRAS de la direccion del
-    // arrastre (clavando los talones), nada de alternar como al caminar -- solo un temblor
-    // sutil de la tension, no un ciclo de paso real
-    const dragDir = player.dragTargetVx >= 0 ? 1 : -1;
-    const brace = 12 + Math.sin(performance.now()*0.045)*1.5;
-    leftFoot  = {x: -dragDir*brace - 3, y: 15};
-    rightFoot = {x: -dragDir*brace + 5, y: 16};
-  } else if(walking){
-    const amp = 8;
-    leftFoot  = {x: Math.sin(player.walkCycle)*amp,        y:14};
-    rightFoot = {x: Math.sin(player.walkCycle+Math.PI)*amp, y:14};
-  } else if(swinging){
-    // los pies apuntan hacia el vector total que estas generando con WASD mientras te balanceas
-    const input = getInputVector();
-    let footX = 0, footY = 13;
-    if(input.active){
-      const cosT = Math.cos(player.rotation), sinT = Math.sin(player.rotation);
-      const lx =  input.x*cosT + input.y*sinT;
-      const ly = -input.x*sinT + input.y*cosT;
-      const n = Math.hypot(lx,ly) || 1;
-      const reach = 13;
-      footX = (lx/n)*reach;
-      footY = 4 + (ly/n)*reach;
-    }
-    leftFoot  = {x: footX-4, y: footY};
-    rightFoot = {x: footX+4, y: footY};
-    // al recostarse tipo hamaca (modo chill, poseBlend > 0), las piernas se cruzan una sobre
-    // la otra en vez de quedar colgando sueltas: se interpola gradual, igual que el resto de la pose
-    if(poseBlend > 0.001){
-      const chillLeft  = {x: 9, y: 15}; // pierna de "abajo", estirada
-      const chillRight = {x: 3, y: 10}; // pierna de "arriba", cruzada por encima
-      leftFoot  = { x: leftFoot.x  + (chillLeft.x  - leftFoot.x)*poseBlend,  y: leftFoot.y  + (chillLeft.y  - leftFoot.y)*poseBlend };
-      rightFoot = { x: rightFoot.x + (chillRight.x - rightFoot.x)*poseBlend, y: rightFoot.y + (chillRight.y - rightFoot.y)*poseBlend };
-    }
-  } else {
-    // parado/en el aire normal: pies apenas separados, un poco mas si esta dando volteretas
-    const spread = 4 + Math.min(7, Math.abs(player.angularVelocity)*1.2);
-    leftFoot  = {x:-spread, y:14};
-    rightFoot = {x: spread, y:14};
-  }
-  ctx.beginPath(); ctx.moveTo(hip.x,hip.y); ctx.lineTo(leftFoot.x,leftFoot.y);  ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(hip.x,hip.y); ctx.lineTo(rightFoot.x,rightFoot.y); ctx.stroke();
-
-  // torso
-  ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(0,4); ctx.stroke();
-
-  // brazos: cada mano apunta a SU telaraña (si tiene), o a la pose relajada si esa mano esta libre
-  const leftShoulder  = {x:-2, y:-6};
-  const rightShoulder = {x: 2, y:-6};
-  const reach = 20;
-  if(clinging){
-    if(player.clinging.atEdge){
-      // en el borde: la mano que agarra estira HACIA la esquina del edificio (adentro), la otra
-      // queda suelta colgando hacia afuera
-      if(player.clinging.edgeSide === 'left'){
-        ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(11,-2); ctx.stroke(); // mano der agarrada (hacia el edificio)
-        ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y);  ctx.lineTo(-5,3);   ctx.stroke(); // mano izq suelta
-      } else {
-        ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y);  ctx.lineTo(-11,-2); ctx.stroke(); // mano izq agarrada (hacia el edificio)
-        ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(5,3);   ctx.stroke(); // mano der suelta
-      }
-    } else {
-      // escalando en medio: las dos manos arriba agarradas a la pared, alternando como al trepar
-      const cyc = player.climbCycle;
-      ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y);  ctx.lineTo(-7, -11 + Math.sin(cyc)*3); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(7, -11 + Math.sin(cyc+Math.PI)*3); ctx.stroke();
-    }
-  } else if(player.attacking && player.attacking.type === 'punch'){
-    // puñetazo: la mano izquierda se dispara hacia la direccion del golpe, la derecha se queda relajada
-    const atk = player.attacking;
-    const phase = Math.min(1, atk.t/atk.dur);
-    const extend = Math.sin(phase*Math.PI);
-    const pp = localHandPoint(player.x+atk.dirX, player.y+atk.dirY, 10 + extend*13);
-    ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y);  ctx.lineTo(pp.x,pp.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(5,3);     ctx.stroke();
-  } else if(swinging){
-    // cada mano apunta a su telaraña (o cuelga relajada si esa mano esta libre); al recostarse
-    // tipo hamaca (poseBlend > 0) se van curvando hacia atras de la cabeza en vez de quedar
-    // estiradas sosteniendo la soga, como quien se acomoda para descansar
-    let lx, ly, rx, ry;
-    if(leftTarget){
-      const hp = localHandPoint(leftTarget.x, leftTarget.y, reach);
-      lx = hp.x; ly = hp.y;
-    } else {
-      lx = -5; ly = 3;
-    }
-    if(rightTarget){
-      const hp = localHandPoint(rightTarget.x, rightTarget.y, reach);
-      rx = hp.x; ry = hp.y;
-    } else {
-      rx = 5; ry = 3;
-    }
-    if(poseBlend > 0.001){
-      const chillHandL = {x:-7, y:-16};
-      const chillHandR = {x: 7, y:-16};
-      lx += (chillHandL.x - lx)*poseBlend; ly += (chillHandL.y - ly)*poseBlend;
-      rx += (chillHandR.x - rx)*poseBlend; ry += (chillHandR.y - ry)*poseBlend;
-    }
-    ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y);  ctx.lineTo(lx,ly); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(rx,ry); ctx.stroke();
-  } else if(walking){
-    ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y); ctx.lineTo(Math.sin(player.walkCycle+Math.PI)*6, -2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(Math.sin(player.walkCycle)*6, -2);          ctx.stroke();
-  } else {
-    // pose normal de pie: brazos hacia abajo, pegados al cuerpo
-    ctx.beginPath(); ctx.moveTo(leftShoulder.x,leftShoulder.y); ctx.lineTo(-5,3); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(rightShoulder.x,rightShoulder.y); ctx.lineTo(5,3);  ctx.stroke();
-  }
-
-  // cabeza
-  ctx.beginPath(); ctx.arc(0,-11,5,0,Math.PI*2); ctx.fill();
-
-  if(player.fallWarning) drawFallWarningMarks(ctx);
-
-  ctx.restore();
-}
-
-// rayitas onduladas cerca de la cabeza cuando el aviso de caida esta activo (ver
-// updateFallWarning): un par de garabatos tipo "vibracion" a los costados, animados rapido con
-// el tiempo real (no ralentizado por el slowmo del sentido arácnido, para que el aviso siga
-// sintiendose urgente aunque el resto del mundo este en camara lenta). Se dibujan DESPUES de
-// rotar de vuelta -player.rotation, asi quedan siempre derechitas aunque el cuerpo este girando
-// en pleno aire (como cualquier marca de HUD pegada a un personaje que gira)
-function drawFallWarningMarks(ctx){
-  ctx.save();
-  ctx.translate(0, -11);
-  ctx.rotate(-player.rotation);
-  const phase = realTime*30;
-  ctx.globalAlpha = 0.6 + 0.4*Math.sin(phase*1.6);
-  ctx.strokeStyle = '#fff176';
-  ctx.lineWidth = 1.6;
-  ctx.lineCap = 'round';
-  const drawSquiggle = (baseX, dir) => {
-    ctx.beginPath();
-    const segs = 5;
-    for(let i=0;i<=segs;i++){
-      const t = i/segs;
-      const x = baseX + dir*t*8;
-      const y = -9 - t*2 + Math.sin(phase + t*10)*2.2;
-      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    }
-    ctx.stroke();
-  };
-  drawSquiggle(-8, -1);
-  drawSquiggle(8, 1);
-  ctx.restore();
-}
-
-// dibuja una telaraña entre dos puntos; si "slack" (floja) es mayor a 0, la curva un poco (sag),
-// como una soga real que no esta perfectamente tensa
-function drawRope(x1,y1,x2,y2, slack, alpha, color){
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  if(slack > 1){
-    const mx = (x1+x2)/2, my = (y1+y2)/2;
-    const sag = Math.min(slack*0.6, 90);
-    ctx.moveTo(x1,y1);
-    ctx.quadraticCurveTo(mx, my+sag, x2, y2);
-  } else {
-    ctx.moveTo(x1,y1);
-    ctx.lineTo(x2,y2);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
+// drawPlayer, drawFallWarningMarks y drawRope ahora viven en render/player.js (ver
+// render/manifest.js) -- se cargan solas (sincronico, via document.write, igual que sky.js y
+// hud.js) y llegan como funciones globales igual que antes de moverlas, no hace falta tocar
+// nada mas aca. Dependen de un par de funciones que siguen justo arriba en este mismo archivo
+// (webHandTarget, localHandPoint) y de globales como player/ctx/poseBlend/realTime -- todo eso
+// se resuelve recien cuando drawPlayer/drawRope/etc. se LLAMAN durante el loop de dibujo, asi
+// que el orden de carga entre ese archivo y este no importa para nada de esto.
 
 // ---------- RENDER ----------
 // ---------- FONDO: cielo, sol, montañas y nubes, segun la hora real de la maquina ----------
 
-function hexToRgb(hex){
-  const n = parseInt(hex.slice(1), 16);
-  return {r:(n>>16)&255, g:(n>>8)&255, b:n&255};
-}
-function lerpColor(a, b, t){
-  t = Math.max(0, Math.min(1, t));
-  const pa = hexToRgb(a), pb = hexToRgb(b);
-  const r = Math.round(pa.r + (pb.r-pa.r)*t);
-  const g = Math.round(pa.g + (pb.g-pa.g)*t);
-  const bl = Math.round(pa.b + (pb.b-pa.b)*t);
-  return `rgb(${r},${g},${bl})`;
-}
+// hexToRgb, lerpColor, getDaylightInfo, drawSky, drawSun, mountainHeight, drawMountainLayer,
+// drawMountains, drawCloudBlob y drawClouds ahora viven en render/sky.js (ver
+// render/manifest.js) -- se cargan solas, llegan como funciones globales igual que antes.
 
-// calcula, a partir de la hora real de la maquina, donde deberia estar el sol y que tan
-// "de dia" esta la luz ambiente (0 = noche cerrada, 1 = pleno dia), con un degradado suave
-// alrededor del amanecer y el atardecer (ni el sol ni la luz cambian de golpe)
-function getDaylightInfo(){
-  const now = new Date();
-  const hour = now.getHours() + now.getMinutes()/60 + now.getSeconds()/3600;
+// drawSpiderSenseVignette, drawPlayerHpBar, drawWebAmmoHUD y drawGameOverScreen ahora viven en
+// render/hud.js (ver render/manifest.js) -- se cargan solas, llegan como funciones globales
+// igual que antes
 
-  const sunrise = 6.25, sunset = 18.75;  // horario aproximado (sin geolocalizacion)
-  const span = 1.1;                      // duracion del degradado de amanecer/atardecer, en horas
-
-  const sunT = (hour - sunrise) / (sunset - sunrise); // 0 al amanecer, 1 al atardecer
-  const sunUp = sunT >= 0 && sunT <= 1;
-  const sunArc = sunUp ? Math.sin(sunT*Math.PI) : 0;   // 0 en el horizonte, 1 en el cenit
-
-  let dayLight = 0;
-  if(hour >= sunrise && hour <= sunset) dayLight = 1;
-  else if(hour >= sunrise-span && hour < sunrise) dayLight = (hour-(sunrise-span))/span;
-  else if(hour > sunset && hour <= sunset+span) dayLight = 1-(hour-sunset)/span;
-  dayLight = Math.max(0, Math.min(1, dayLight));
-
-  // "warm": que tan cerca estamos de un amanecer/atardecer (pico en dayLight ~0.5), para el
-  // tono anaranjado tipico de esas horas, tanto en el cielo como en el sol y las montañas
-  const warm = Math.max(0, 1 - Math.abs(dayLight-0.5)*2.6);
-
-  return {hour, sunT, sunUp, sunArc, dayLight, warm};
-}
-
-function drawSky(sky){
-  const topColor = lerpColor('#050912', '#4fa8d8', sky.dayLight);
-  let horizonColor = lerpColor('#141a33', '#bfe6f2', sky.dayLight);
-  horizonColor = lerpColor(horizonColor, '#ff9a63', sky.warm*0.75);
-
-  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  grad.addColorStop(0, topColor);
-  grad.addColorStop(1, horizonColor);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-}
-
-function drawSun(sky){
-  if(!sky.sunUp) return; // de noche, simplemente no sale
-
-  const sunX = canvas.width * (0.06 + 0.88*sky.sunT);
-  const horizonY = canvas.height*0.56, peakY = canvas.height*0.10;
-  const sunY = horizonY - sky.sunArc*(horizonY - peakY);
-  const sunColor = lerpColor('#ff7b42', '#fff6d6', sky.sunArc);
-
+// dibuja un letrero de oficina (b.billboard = {text, style}, ver world/structures/buildings.js)
+// SIN cuadrado de fondo -- cada estilo es solo tipografia + color + (a veces) resplandor neon.
+// x,y es el centro del texto (ctx.textAlign/textBaseline ya vienen en 'center'/'middle' desde
+// donde se llama, y se respetan gracias al save/restore de aca adentro)
+function drawBillboard(x, y, text, style){
   ctx.save();
-  ctx.shadowColor = sunColor;
-  ctx.shadowBlur = 45;
-  ctx.fillStyle = sunColor;
-  ctx.beginPath(); ctx.arc(sunX, sunY, 26, 0, Math.PI*2); ctx.fill();
-  ctx.restore();
-}
-
-// perfil de montañas simple: combina un par de senos de distinta frecuencia para que no se
-// vea un zigzag perfecto, pero tampoco haga falta guardar un array gigante de puntos
-function mountainHeight(x, freqScale){
-  return Math.sin(x*0.0021*freqScale)*34 + Math.sin(x*0.0007*freqScale + 1.6)*58;
-}
-
-function drawMountainLayer(sky, baseYFrac, ampScale, freqScale, parallax, color){
-  const baseY = canvas.height*baseYFrac;
-  const originX = camera.x*parallax;
-  const step = 48;
-
-  ctx.beginPath();
-  ctx.moveTo(0, canvas.height);
-  for(let sx = 0; sx <= canvas.width+step; sx += step){
-    const h = Math.max(0, mountainHeight(sx+originX, freqScale))*ampScale;
-    ctx.lineTo(sx, baseY - h);
-  }
-  ctx.lineTo(canvas.width, canvas.height);
-  ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
-}
-
-function drawMountains(sky){
-  let far  = lerpColor('#141c33', '#7c96ad', sky.dayLight);
-  let near = lerpColor('#0c1220', '#5c7a92', sky.dayLight);
-  far  = lerpColor(far,  '#8a6b86', sky.warm*0.5);
-  near = lerpColor(near, '#6b5468', sky.warm*0.5);
-
-  drawMountainLayer(sky, 0.60, 0.7, 1.0, 0.035, far);
-  drawMountainLayer(sky, 0.63, 1.0, 1.6, 0.08,  near);
-}
-
-// nubes simples: cada una es un puñado de elipses superpuestas, y se van repitiendo (con
-// wraparound) a lo largo de un periodo bastante mas ancho que la pantalla
-const CLOUD_LAYER = [
-  {ox: 120,  oy: 0.14, s: 1.0},
-  {ox: 620,  oy: 0.23, s: 0.7},
-  {ox: 1080, oy: 0.10, s: 1.25},
-  {ox: 1520, oy: 0.27, s: 0.8},
-  {ox: 1980, oy: 0.17, s: 1.05},
-];
-const CLOUD_PERIOD = 2400;
-
-function drawCloudBlob(x, y, scale){
-  ctx.beginPath();
-  ctx.ellipse(x,        y,       34*scale, 14*scale, 0, 0, Math.PI*2);
-  ctx.ellipse(x+22*scale, y-6*scale, 22*scale, 12*scale, 0, 0, Math.PI*2);
-  ctx.ellipse(x-24*scale, y-4*scale, 20*scale, 11*scale, 0, 0, Math.PI*2);
-  ctx.fill();
-}
-
-function drawClouds(sky){
-  const parallax = 0.12;
-  const drift = performance.now()*0.0025; // deriva lenta y constante, independiente de la camara
-  const scrollX = camera.x*parallax + drift;
-  const cloudColor = lerpColor('#3a3f55', '#ffffff', sky.dayLight);
-
-  ctx.save();
-  ctx.globalAlpha = 0.82;
-  ctx.fillStyle = cloudColor;
-  const repeats = Math.ceil(canvas.width/CLOUD_PERIOD) + 2;
-  for(const c of CLOUD_LAYER){
-    const base = ((c.ox - scrollX) % CLOUD_PERIOD + CLOUD_PERIOD) % CLOUD_PERIOD;
-    for(let i=-1; i<repeats; i++){
-      const sx = base + i*CLOUD_PERIOD;
-      if(sx < -80 || sx > canvas.width+80) continue;
-      drawCloudBlob(sx, canvas.height*c.oy, c.s);
+  switch(style){
+    case 'neon-pink':
+    case 'neon-cyan':
+    case 'neon-green': {
+      // letras neon: relleno clarito + resplandor del color de la marca, y un filo fino del
+      // mismo color por encima para que el tubo de neon se vea "prendido" hasta en el borde
+      const glow = style === 'neon-pink' ? '#ff2fb0' : style === 'neon-cyan' ? '#2fe4ff' : '#39ff6a';
+      const fill = style === 'neon-pink' ? '#ffcdf0' : style === 'neon-cyan' ? '#cdf7ff' : '#d4ffe0';
+      ctx.font = 'italic bold 21px "Segoe UI", sans-serif';
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = fill;
+      ctx.fillText(text, x, y);
+      ctx.fillText(text, x, y); // paso doble: refuerza el relleno sin perder el resplandor
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = glow;
+      ctx.strokeText(text, x, y);
+      break;
     }
-  }
-  ctx.restore();
-}
-
-// dibuja el circulo de oscuridad temblorosa centrado en el jugador (en espacio de pantalla).
-// la intensidad depende de cuan metido estas en el bullet time; el radio tiembla con tiempo
-// real para que se note vivo incluso cuando el resto del juego esta casi congelado
-function drawSpiderSenseVignette(){
-  const intensity = Math.max(0, Math.min(1, (1 - timeScale) / (1 - SLOWMO_TARGET)));
-  if(intensity <= 0.002) return;
-
-  const cx = player.x - camera.x, cy = player.y - camera.y;
-  const jitter = Math.sin(realTime*16)*7 + Math.sin(realTime*27 + 1.7)*4 + Math.sin(realTime*41 + 0.5)*2;
-  const innerR = Math.max(30, 150 - intensity*40 + jitter);
-  const outerR = Math.max(canvas.width, canvas.height) * 0.72;
-
-  ctx.save();
-  const grad = ctx.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
-  grad.addColorStop(0, 'rgba(5,5,15,0)');
-  grad.addColorStop(1, `rgba(5,5,15,${0.88*intensity})`);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // un aro sutil, tambien tembloroso, marcando el borde del "foco" de atencion
-  ctx.globalAlpha = intensity*0.5;
-  ctx.strokeStyle = '#8fd6ff';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(cx, cy, innerR + 3, 0, Math.PI*2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-// barra de vida simple: una sola barra larga (nada de vidas/corazones separados), esquina
-// superior izquierda, en espacio de pantalla. A proposito poco estilizada: fondo oscuro, marco
-// fino, relleno segun el % de vida (verde -> amarillo -> rojo segun baja)
-const HP_BAR_X = 16, HP_BAR_Y = 16, HP_BAR_W = 240, HP_BAR_H = 18;
-function drawPlayerHpBar(){
-  const frac = Math.max(0, Math.min(1, player.hp / player.maxHp));
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(HP_BAR_X-3, HP_BAR_Y-3, HP_BAR_W+6, HP_BAR_H+6);
-
-  ctx.fillStyle = '#3a3a3a';
-  ctx.fillRect(HP_BAR_X, HP_BAR_Y, HP_BAR_W, HP_BAR_H);
-
-  const color = frac > 0.5 ? '#43b581' : (frac > 0.25 ? '#e6b800' : '#d64545');
-  ctx.fillStyle = color;
-  ctx.fillRect(HP_BAR_X, HP_BAR_Y, HP_BAR_W*frac, HP_BAR_H);
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(HP_BAR_X+0.5, HP_BAR_Y+0.5, HP_BAR_W-1, HP_BAR_H-1);
-  ctx.restore();
-}
-
-// contador de telaraña restante EN METROS, uno por mano (son dos lanzatelarañas
-// independientes, cada uno con su propio tanque): dos cuadraditos en la misma fila arriba a
-// la derecha -- el de la IZQUIERDA queda a la izquierda del bloque, el de la DERECHA a la
-// derecha (asi la posicion ya te dice cual es cual, sin necesidad de escribir "IZQ"/"DER").
-// Formato "###.##/###.##" (metros que quedan / capacidad maxima de esa mano), gris clarito
-// sobre fondo oscuro semitransparente. Si el webType activo es infinito (Tobey, o si
-// controls.json no trajo nada de esto), esta funcion no dibuja absolutamente nada -- las
-// telarañas organicas no necesitan contador, son infinitas como siempre.
-//
-// cada numero se pinta en rojo un ratito (WEB_METERS_FLASH_MS) cada vez que ESA mano gasta
-// metros de verdad (ver consumeWebAmmo en webSling.js, que es quien pisa
-// webMetersFlashUntil[hand]) -- gastar la derecha no hace flashear el numero de la izquierda
-const WEB_METERS_PANEL_W = 96;
-const WEB_METERS_PANEL_H = 26;
-const WEB_METERS_PANEL_GAP = 6;   // espacio entre el panel izquierdo y el derecho
-const WEB_METERS_HUD_MARGIN = 12;
-const WEB_METERS_COLOR = '#c9c9c9';       // gris claro, estado normal
-const WEB_METERS_FLASH_COLOR = '#e35a5a'; // rojo, el ratito justo despues de gastar
-function drawWebAmmoHUD(){
-  const cfg = CONTROLS.webTypes && CONTROLS.webTypes[CONTROLS.webType];
-  if(!cfg || cfg.infinite) return;
-
-  const blockW = WEB_METERS_PANEL_W*2 + WEB_METERS_PANEL_GAP;
-  const y = WEB_METERS_HUD_MARGIN;
-  const xLeftPanel = canvas.width - WEB_METERS_HUD_MARGIN - blockW;
-  const xRightPanel = xLeftPanel + WEB_METERS_PANEL_W + WEB_METERS_PANEL_GAP;
-
-  ctx.save();
-  ctx.font = '14px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  const now = performance.now();
-  const hands = [
-    { hand: 'left',  x: xLeftPanel },
-    { hand: 'right', x: xRightPanel }
-  ];
-  for(const {hand, x} of hands){
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x, y, WEB_METERS_PANEL_W, WEB_METERS_PANEL_H);
-
-    const flashing = webMetersFlashUntil && now < webMetersFlashUntil[hand];
-    ctx.fillStyle = flashing ? WEB_METERS_FLASH_COLOR : WEB_METERS_COLOR;
-    ctx.fillText(webMeters[hand].toFixed(2) + '/' + cfg.maxMeters[hand].toFixed(2), x + WEB_METERS_PANEL_W/2, y + WEB_METERS_PANEL_H/2 + 1);
+    case 'outline-gold':
+      ctx.font = 'bold 20px Georgia, serif';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#3a2a06';
+      ctx.strokeText(text, x, y);
+      ctx.fillStyle = '#f2c14e';
+      ctx.fillText(text, x, y);
+      break;
+    case 'outline-white':
+      ctx.font = 'bold 20px Arial, sans-serif';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#111';
+      ctx.strokeText(text, x, y);
+      ctx.fillStyle = '#f2f2ec';
+      ctx.fillText(text, x, y);
+      break;
+    case 'corporate-clean':
+    default:
+      // el mas discreto de todos: solo un filo suave, pensado para carteles chicos o textos largos
+      ctx.font = '600 18px Arial, sans-serif';
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.strokeText(text, x, y);
+      ctx.fillStyle = '#e7e9ee';
+      ctx.fillText(text, x, y);
+      break;
   }
   ctx.restore();
 }
 
 function render(){  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  const sky = getDaylightInfo();
-  drawSky(sky);
-  drawSun(sky);
-  drawMountains(sky);
-  drawClouds(sky);
+  // entrar a los edificios (ver world/interiors.js): adentro no hay cielo/sol/montañas/nubes de
+  // afuera (fondo simple, oscuro), pero SI se sigue usando la misma camara/translate que afuera
+  // -- ya no arma su propio encuadre fijo (bx,by,fit) como antes, ver drawRoomWorld
+  let sky = null;
+  if(window.insideBuilding){
+    ctx.fillStyle = '#0d0e12';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  } else {
+    sky = getDaylightInfo();
+    drawSky(sky);
+    drawSun(sky);
+    drawMountains(sky);
+    drawClouds(sky);
+  }
 
   ctx.save();
   ctx.translate(-camera.x, -camera.y);
 
-  // edificios
-  ctx.fillStyle = '#555a66';
+  if(window.insideBuilding){
+    // el cuarto entero (paredes, entrepisos, puerta, muebles), en coordenadas de mundo reales
+    drawRoomWorld(ctx);
+  } else {
+
+  // edificios: el cuerpo usa b.color si el building lo trae (hoy solo los hospitales, que son
+  // blancos -- ver world/structures/buildings.js) y si no el gris de apartamento/oficina de siempre
   for(const b of buildings){
+    ctx.fillStyle = b.color || '#555a66';
     ctx.fillRect(b.x, b.y, b.w, b.h);
   }
 
-  // ventanitas de cada edificio (fijas, algunas prendidas de noche-dia ficticio)
+  // ventanitas (apartamentos y hospitales, b.windows) o ventanales de oficina (b.panels) --
+  // cada edificio trae UNO de los dos segun su kind (ver buildings.js), nunca ambos
   for(const b of buildings){
-    for(const win of b.windows){
-      ctx.fillStyle = win.lit ? '#ffe9a8' : '#2a2d35';
-      ctx.fillRect(b.x + win.x, b.y + win.y, WINDOW_W, WINDOW_H);
+    if(b.panels){
+      // oficina: paneles grandes tipo cortina de vidrio de un solo color (b.glassColor),
+      // divididos en "segments" con lineas finas que simulan los parantes del ventanal
+      ctx.fillStyle = b.glassColor;
+      for(const p of b.panels) ctx.fillRect(b.x + p.x, b.y + p.y, p.w, p.h);
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 1;
+      for(const p of b.panels){
+        for(let s=1; s<p.segments; s++){
+          const sx = b.x + p.x + (p.w/p.segments)*s;
+          ctx.beginPath(); ctx.moveTo(sx, b.y+p.y); ctx.lineTo(sx, b.y+p.y+p.h); ctx.stroke();
+        }
+      }
+    } else if(b.windows){
+      // apartamento u hospital: ventanitas chicas de toda la vida. El hospital fuerza su propio
+      // color fijo (b.windowColor) para todas por igual; el apartamento sigue prendiendo/
+      // apagando cada una segun "lit", como siempre
+      for(const win of b.windows){
+        ctx.fillStyle = b.windowColor || (win.lit ? '#ffe9a8' : '#2a2d35');
+        ctx.fillRect(b.x + win.x, b.y + win.y, WINDOW_W, WINDOW_H);
+      }
     }
   }
 
-  // letreros de publicidad boba, bien vistosos, pegados en la fachada de algunos edificios
+  // cruz roja de los hospitales, pegada cerca de la punta de la fachada (b.cross, ver buildings.js)
+  for(const b of buildings){
+    if(!b.cross) continue;
+    const {cx, cy, size, color} = b.cross;
+    const thick = size / 3.2;
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - size/2, cy - thick/2, size, thick);
+    ctx.fillRect(cx - thick/2, cy - size/2, thick, size);
+  }
+
+  // puertas: una por edificio, a nivel de calle, en el mismo punto exacto que ya usa
+  // findNearbyDoor (ver world/interiors.js) para detectar cercania -- asi lo que se ve dibujado
+  // coincide siempre con lo que en verdad te deja entrar.
+  drawBuildingDoors(ctx);
+
+  // letreros: SOLO existen en oficinas (b.billboard = {text, style}, ver
+  // world/structures/buildings.js) -- sin cuadrado de fondo, cada uno con su propia pinta
+  // (drawBillboard, definido arriba de render())
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 13px monospace';
   for(const b of buildings){
     if(!b.billboard) continue;
-    const bw = Math.min(b.w - 10, 10 + b.billboard.length*9);
-    const bh = 26;
-    const bx = b.x + (b.w - bw)/2;
-    const by = b.y + 34;
-    ctx.fillStyle = '#111';
-    ctx.fillRect(bx-3, by-3, bw+6, bh+6);
-    ctx.fillStyle = '#f2c14e';
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = '#111';
-    ctx.fillText(b.billboard, bx+bw/2, by+bh/2+1);
+    drawBillboard(b.x + b.w/2, b.y + 40, b.billboard.text, b.billboard.style);
   }
   ctx.textAlign = 'start';
   ctx.textBaseline = 'alphabetic';
@@ -2678,9 +1934,26 @@ function render(){  ctx.clearRect(0,0,canvas.width,canvas.height);
     if(p.balcony) ctx.fillRect(p.x, p.y-8, p.w, 10);
   }
 
+  // calle (se dibuja segun lo que este a la vista, ya que la ciudad es infinita)
+  ctx.fillStyle = '#333';
+  ctx.fillRect(camera.x - 100, STREET_Y, canvas.width + 200, 4000);
+
+  // carros: ahora vive en world/traffic.js (drawCars), mismo lugar exacto en el orden de
+  // dibujo (justo despues de la calle, antes de las entidades modulares)
+  drawCars(ctx);
+
+  // entidades modulares (civiles, villanos, dummies, etc.) y sus proyectiles
+  drawEntities(ctx);
+  drawEntityProjectiles(ctx);
+
+  } // fin del else (mundo de afuera) -- lo de aca abajo es comun a adentro y afuera
+
   // redes tejidas (ver weaveNet): dos segmentos rectos y tensos, con un puntito en cada
   // anclaje y otro en el vertice del medio. Se ven bien blancas/opacas casi toda su vida y
-  // recien en los ultimos NET_FADE_TIME segundos se van desvaneciendo hasta desaparecer
+  // recien en los ultimos NET_FADE_TIME segundos se van desvaneciendo hasta desaparecer.
+  // Comun a adentro y afuera: si tejiste una red adentro de un edificio (ahora que la mira/
+  // telaraña ya engancha contra la fachada del cuarto, ver findBuildingAt en este archivo),
+  // tiene que verse y seguir funcionando igual que afuera
   for(const net of webNets){
     const alpha = net.age >= NET_LIFETIME - NET_FADE_TIME
       ? Math.max(0, 1 - (net.age - (NET_LIFETIME - NET_FADE_TIME))/NET_FADE_TIME)
@@ -2698,58 +1971,22 @@ function render(){  ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.restore();
   }
 
-  // calle (se dibuja segun lo que este a la vista, ya que la ciudad es infinita)
-  ctx.fillStyle = '#333';
-  ctx.fillRect(camera.x - 100, STREET_Y, canvas.width + 200, 4000);
-
-  // carros: diseño minimo (carroceria + parabrisas + ruedas)
-  for(const car of cars){
-    ctx.save();
-    // car.tipped/tipRotation/tipYOffset: SOLO existen durante el arrastre del boss (ver
-    // entities/dragsystem.js) -- un auto normal jamas los tiene, asi que en cualquier otro
-    // momento del juego este bloque no hace nada (rotation 0, offset 0 sobre su propio pivote)
-    if(car.tipped){
-      const px = car.x + car.w/2, py = car.y + car.h;
-      ctx.translate(px, py + (car.tipYOffset || 0));
-      ctx.rotate(car.tipRotation || 0);
-      ctx.translate(-px, -py);
-    }
-
-    ctx.fillStyle = (CAR_COLORS[car.color] && CAR_COLORS[car.color].body) || '#d64545';
-    ctx.fillRect(car.x, car.y, car.w, car.h);
-
-    // parabrisas/ventanas
-    ctx.fillStyle = '#2a2d35';
-    ctx.fillRect(car.x + car.w*0.14, car.y + 6, car.w*0.72, car.h*0.34);
-
-    // ruedas
-    ctx.fillStyle = '#111';
-    const wheelR = CAR_WHEEL_RADIUS;
-    ctx.beginPath(); ctx.arc(car.x + car.w*0.22, car.y + car.h, wheelR, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(car.x + car.w*0.78, car.y + car.h, wheelR, 0, Math.PI*2); ctx.fill();
-
-    // faros
-    ctx.fillStyle = '#ffe9a8';
-    const headlightX = car.vx >= 0 ? car.x + car.w - 5 : car.x;
-    ctx.fillRect(headlightX, car.y + car.h*0.55, 5, 6);
-    ctx.restore();
-  }
-
-  // entidades modulares (civiles, villanos, dummies, etc.) y sus proyectiles
-  drawEntities(ctx);
-  drawEntityProjectiles(ctx);
-
-  // telarañas: una por mano, cada una en su propio estado visual
+  // telarañas: una por mano, cada una en su propio estado visual. Salen de la posicion MUNDIAL
+  // real de esa mano (computePlayerPose ya la calculo y la dejo en player.leftHandWorld /
+  // player.rightHandWorld), no del centro del cuerpo -- por eso la llamamos aca, ANTES de
+  // drawPlayer(ctx) mas abajo, asi la pose de este frame ya esta lista cuando la necesitamos
+  computePlayerPose();
   for(const hand of ['left','right']){
     const w = webs[hand];
     if(!w) continue;
+    const handPos = hand === 'left' ? player.leftHandWorld : player.rightHandWorld;
 
     if(w.state === 'travel'){
-      drawRope(player.x, player.y, w.tipX, w.tipY, 0, 1, '#f2f2ec');
+      drawRope(handPos.x, handPos.y, w.tipX, w.tipY, 0, 1, '#f2f2ec');
     } else if(w.state === 'attached'){
-      const dist = Math.hypot(player.x - w.anchorX, player.y - w.anchorY);
+      const dist = Math.hypot(handPos.x - w.anchorX, handPos.y - w.anchorY);
       const slack = Math.max(0, w.ropeLength - dist);
-      drawRope(player.x, player.y, w.anchorX, w.anchorY, slack, 1, '#f2f2ec');
+      drawRope(handPos.x, handPos.y, w.anchorX, w.anchorY, slack, 1, '#f2f2ec');
       ctx.fillStyle = '#f2f2ec';
       ctx.beginPath(); ctx.arc(w.anchorX, w.anchorY, 4, 0, Math.PI*2); ctx.fill();
     } else if(w.state === 'detached'){
@@ -2777,8 +2014,9 @@ function render(){  ctx.clearRect(0,0,canvas.width,canvas.height);
 
   ctx.restore();
 
-  // oscurece toda la escena de a poco cuanto mas de noche sea (de dia no se nota nada)
-  if(sky.dayLight < 1){
+  // oscurece toda la escena de a poco cuanto mas de noche sea (de dia no se nota nada) -- solo
+  // afuera: adentro de un edificio "sky" es null (no hay cielo/hora del dia que aplicar ahi)
+  if(sky && sky.dayLight < 1){
     ctx.save();
     ctx.globalAlpha = (1 - sky.dayLight) * 0.55;
     ctx.fillStyle = '#0a1030';
@@ -2798,6 +2036,10 @@ function render(){  ctx.clearRect(0,0,canvas.width,canvas.height);
   // contador de municion del lanzatelarañas (Andrew) -- no dibuja nada si el tipo activo es
   // infinito (Tobey), ver drawWebAmmoHUD
   drawWebAmmoHUD();
+  // adentro de un edificio: rotulo de piso + "Presiona E para salir" (ver drawIndoorHUD, world/
+  // interiors.js) -- afuera: letrerito de "Presiona E para entrar" cuando estas cerca de una
+  // puerta (drawDoorPrompt, no dibuja nada si no hay ninguna cerca)
+  if(window.insideBuilding) drawIndoorHUD(ctx); else drawDoorPrompt(ctx);
 
   // HUD de cada entidad que lo necesite (indicadores, iconos, flechas), en espacio de pantalla,
   // igual que la barra de vida de arriba -- ver window.HUD_DRAW_LISTENERS
@@ -2838,27 +2080,6 @@ function render(){  ctx.clearRect(0,0,canvas.width,canvas.height);
 
   // pantalla de GAME OVER: va de ultima, por encima de todo lo demas (HUD, retícula, etc.)
   if(gameOver) drawGameOverScreen();
-}
-
-// pantalla simple de GAME OVER: fondo oscuro tapando todo, titulo en rojo y la instruccion de
-// reinicio. Nada de esto usa espacio de camara (es HUD, en espacio de pantalla)
-function drawGameOverScreen(){
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.72)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  ctx.fillStyle = '#d64545';
-  ctx.font = 'bold 64px sans-serif';
-  ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 24);
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '22px sans-serif';
-  ctx.fillText('Reiniciar pulsando ENTER', canvas.width/2, canvas.height/2 + 28);
-
-  ctx.restore();
 }
 
 // carga las entidades externas declaradas en entities/manifest.js (si hay alguna: mientras ese
